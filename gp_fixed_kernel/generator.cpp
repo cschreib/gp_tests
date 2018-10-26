@@ -64,17 +64,21 @@ int vif_main(int argc, char* argv[]) {
     }
 
     vec1d m;
+    matrix::mat2d ikoo;
     matrix::mat2d cov;
+    double dkoo = 0.0;
 
+    double t = now();
     if (method == "inverse") {
-        matrix::mat2d ikoo;
-        if (!matrix::invert(koo, ikoo)) {
+        if (!matrix::invert_symmetric(koo, ikoo)) {
             error("could not invert Kernel matrix");
             return 1;
         }
 
+        matrix::inplace_symmetrize(ikoo);
+
         m = kto*ikoo*yo;
-        cov = ktt - kto*ikoo*transpose(kto);
+        dkoo = matrix::determinant(koo);
     } else if (method == "cholesky") {
         matrix::decompose_cholesky d;
         if (!d.decompose(koo)) {
@@ -82,14 +86,23 @@ int vif_main(int argc, char* argv[]) {
             return 1;
         }
 
+        ikoo = d.invert();
+
         m = kto*d.solve(yo);
-        cov = ktt - kto*d.invert()*transpose(kto);
+        dkoo = sqr(d.determinant());
     } else {
         error("unknown inversion method '", method, "'");
         return 1;
     }
 
+    t = now() - t;
+    print("time for solving: ", t);
+
+    cov = ktt - kto*ikoo*transpose(kto);
     fits::write("cov.fits", cov.base);
+
+    double logp = -0.5*(total(yo*ikoo*yo) + log(dkoo) + yo.size()*log(2.0*dpi));
+    print("log evidence: ", logp);
 
     matrix::mat2d l;
     matrix::decompose_cholesky d;
