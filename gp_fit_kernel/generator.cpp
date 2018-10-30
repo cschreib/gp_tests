@@ -10,10 +10,11 @@ int vif_main(int argc, char* argv[]) {
     uint_t n = 1;
     uint_t tseed = 42;
     double length0 = 3.0;
+    double var0 = 2.0;
     double nugget = 0.0;
     std::string method = "inverse"; // "inverse", "cholesky"
     std::string kernel = "sqexp"; // "exp", "sqexp", "nn", "gibbs"
-    read_args(argc-2, argv+2, arg_list(n, name(tseed, "seed"), length0, nugget, method, kernel));
+    read_args(argc-2, argv+2, arg_list(n, name(tseed, "seed"), length0, var0, nugget, method, kernel));
 
     vec1d xo, yo, eo, xt;
     fits::read_table(param_file, "x", xo, "y", yo, "ye", eo, "xt", xt);
@@ -23,13 +24,20 @@ int vif_main(int argc, char* argv[]) {
 
     matrix::mat2d koo(no,no);
     matrix::mat2d dlkoo(no,no);
+    matrix::mat2d dvkoo(no,no);
     matrix::mat2d ikoo;
 
-    auto fkernel = [&](double x1, double x2, double l) {
+    double logpe = 0.0;
+    for (uint_t i : range(eo)) {
+        logpe += 2.0*log(eo[i]);
+    }
+
+    auto fkernel = [&](double x1, double x2, double l, double lv) {
+        double k;
         if (kernel == "exp") {
-            return exp(-abs(x1 - x2)/l);
+            k = exp(-abs(x1 - x2)/l);
         } else if (kernel == "sqexp") {
-            return exp(-0.5*sqr(x1 - x2)/sqr(l));
+            k = exp(-0.5*sqr(x1 - x2)/sqr(l));
         } else if (kernel == "gibbs") {
             auto length_func = [&](double x) {
                 return l/sqrt(2.0)*(
@@ -39,24 +47,27 @@ int vif_main(int argc, char* argv[]) {
 
             double l1 = length_func(x1);
             double l2 = length_func(x2);
-            return ((2*l1*l2)/(sqr(l1) + sqr(l2)))*exp(-0.5*sqr(x1 - x2)/(sqr(l1) + sqr(l2)));
+            k = ((2*l1*l2)/(sqr(l1) + sqr(l2)))*exp(-0.5*sqr(x1 - x2)/(sqr(l1) + sqr(l2)));
         } else if (kernel == "nn") {
             x1 = (x1 - 3)/l;
             x2 = (x2 - 3)/l;
-            return asin(
+            k = asin(
                 2.0*x1*x2/
                 sqrt((1.0 + 2.0*sqr(x1))*(1.0 + 2.0*sqr(x2)))
             );
         } else {
             vif_check(false, "unknown kernel '", kernel, "'");
         }
+
+        return exp(lv)*k;
     };
 
-    auto dfkernel = [&](double x1, double x2, double l) {
+    auto dfkernel_l = [&](double x1, double x2, double l, double lv) {
+        double dk;
         if (kernel == "exp") {
-            return exp(-abs(x1 - x2)/l)*abs(x1 - x2)/pow(l,2);
+            dk = exp(-abs(x1 - x2)/l)*abs(x1 - x2)/pow(l,2);
         } else if (kernel == "sqexp") {
-            return exp(-0.5*sqr(x1 - x2)/sqr(l))*sqr(x1 - x2)/pow(l,3);
+            dk = exp(-0.5*sqr(x1 - x2)/sqr(l))*sqr(x1 - x2)/pow(l,3);
         } else if (kernel == "gibbs") {
             vif_check(false, "unimplemented kernel '", kernel, "'");
         } else if (kernel == "nn") {
@@ -64,23 +75,32 @@ int vif_main(int argc, char* argv[]) {
         } else {
             vif_check(false, "unknown kernel '", kernel, "'");
         }
+
+        return exp(lv)*dk;
+    };
+
+    auto dfkernel_v = [&](double x1, double x2, double l, double lv) {
+        return fkernel(x1, x2, l, lv);
     };
 
     auto get_evidence = [&](vec1d p, minimize_function_output opts) {
-        vec1d ret(2);
+        vec1d ret(3);
         double l = p[0];
+        double lv = p[1];
 
         for (uint_t i : range(no))
         for (uint_t j : range(i, no)) {
-            koo.safe(i,j) = koo.safe(j,i) = fkernel(xo.safe[i], xo.safe[j], l) +
+            koo.safe(i,j) = koo.safe(j,i) = fkernel(xo.safe[i], xo.safe[j], l, lv) +
                 (i == j ? nugget + sqr(eo[i]) : 0.0);
 
             if (opts == minimize_function_output::derivatives || opts == minimize_function_output::all) {
-                dlkoo.safe(i,j) = dlkoo.safe(j,i) = dfkernel(xo.safe[i], xo.safe[j], l);
+                dlkoo.safe(i,j) = dlkoo.safe(j,i) = dfkernel_l(xo.safe[i], xo.safe[j], l, lv);
+                dvkoo.safe(i,j) = dvkoo.safe(j,i) = dfkernel_v(xo.safe[i], xo.safe[j], l, lv);
             }
         }
 
-        double dkoo = 0.0;
+        double ldkoo = 0.0;
+        vec1d ikooyo;
         if (method == "inverse") {
             if (!matrix::invert_symmetric(koo, ikoo)) {
                 error("could not invert Kernel matrix");
@@ -88,8 +108,10 @@ int vif_main(int argc, char* argv[]) {
             }
 
             matrix::inplace_symmetrize(ikoo);
+            ikooyo = ikoo*yo;
+
             if (opts == minimize_function_output::value || opts == minimize_function_output::all) {
-                dkoo = matrix::determinant(koo);
+                ldkoo = log(matrix::determinant(koo));
             }
         } else if (method == "cholesky") {
             matrix::decompose_cholesky d;
@@ -99,8 +121,10 @@ int vif_main(int argc, char* argv[]) {
             }
 
             ikoo = d.invert();
+            ikooyo = d.solve(yo);
+
             if (opts == minimize_function_output::value || opts == minimize_function_output::all) {
-                dkoo = sqr(d.determinant());
+                ldkoo = 2.0*d.log_determinant();
             }
         } else {
             error("unknown inversion method '", method, "'");
@@ -108,13 +132,24 @@ int vif_main(int argc, char* argv[]) {
         }
 
         if (opts == minimize_function_output::value || opts == minimize_function_output::all) {
-            ret[0] = 0.5*(total(yo*ikoo*yo) + log(dkoo) + yo.size()*log(2.0*dpi));
+            double l1 = total(yo*ikooyo);
+            double l2 = ldkoo;
+            double l3 = yo.size()*log(2.0*dpi);
+            ret[0] = 0.5*(l1 + l2 + l3 + logpe);
+            vif_check(is_finite(ret[0]), "log evidence is not finite (", ret[0], " = ",
+                l1, " + ", l2, " + ", l3, " + ", logpe, ")");
         }
 
         if (opts == minimize_function_output::derivatives || opts == minimize_function_output::all) {
-            double dlogp = -0.5*total(yo*ikoo*dlkoo*ikoo*yo);
-            dlogp += 0.5*total(diagonal(ikoo*dlkoo));
-            ret[1] = dlogp;
+            double d1 = -0.5*total(ikooyo*dlkoo*ikooyo);
+            double d2 = 0.5*total(diagonal(ikoo*dlkoo));
+            ret[1] = d1 + d2;
+            vif_check(is_finite(ret[1]), "l derivative is not finite (", ret[1], " = ", d1, " + ", d2, ")");
+
+            d1 = -0.5*total(ikooyo*dvkoo*ikooyo);
+            d2 = 0.5*total(diagonal(ikoo*dvkoo));
+            ret[2] = d1 + d2;
+            vif_check(is_finite(ret[1]), "v derivative is not finite (", ret[2], " = ", d1, " + ", d2, ")");
         }
 
         return ret;
@@ -122,27 +157,28 @@ int vif_main(int argc, char* argv[]) {
 
     double t = now();
     minimize_params opts;
-    minimize_result r = minimize_bfgs(opts, vec1d{length0}, get_evidence);
+    minimize_result r = minimize_bfgs(opts, vec1d{length0, log(var0)}, get_evidence);
     t = now() - t;
     print("time needed: ", t);
     print("success: ", r.success);
     print("iterations: ", r.niter);
-    print("value: ", r.params);
+    print("values: ", r.params);
     print("loge: ", -r.value);
 
     double l = r.params[0];
+    double lv = r.params[1];
 
     matrix::mat2d kto(nt,no);
     matrix::mat2d ktt(nt,nt);
 
     for (uint_t i : range(nt))
     for (uint_t j : range(i, nt)) {
-        ktt.safe(i,j) = ktt.safe(j,i) = fkernel(xt.safe[i], xt.safe[j], l) +
+        ktt.safe(i,j) = ktt.safe(j,i) = fkernel(xt.safe[i], xt.safe[j], l, lv) +
             (i == j ? nugget : 0.0);
     }
     for (uint_t i : range(nt))
     for (uint_t j : range(no)) {
-        kto.safe(i,j) = fkernel(xt.safe[i], xo.safe[j], l);
+        kto.safe(i,j) = fkernel(xt.safe[i], xo.safe[j], l, lv);
     }
 
     vec1d m = kto*(ikoo*yo);
