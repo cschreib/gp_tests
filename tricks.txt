@@ -1,0 +1,11 @@
+List of useful tricks to implement GPs:
+
+*) When computing the determinant of the covariance matrix (which enters in the computation of the marginal likelihood). A fast way to obtain it is simply by multiplying the diagonal elements of the L matrix which obtained when doing the Cholesky decomposition. Trick: it is actually more numerically stable to compute the trace of log(L). This is ok because K is positive definite, so L has a strictly positive diagonal and the log will always be finite.
+
+*) A similar trick holds when computing the log product of uncertainties in the marginal likelihood; it is more stable to compute the sum of the logs.
+
+*) In the optimization stage, if a parameter p should be positive then optimize for log(p).
+
+*) vif equivalents:
+  - v'*v = total(v*v)               (inner product)
+  - v*v' = outer_product(v, v)      (outer product)
