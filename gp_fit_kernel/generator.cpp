@@ -11,10 +11,14 @@ int vif_main(int argc, char* argv[]) {
     uint_t tseed = 42;
     double length0 = 3.0;
     double var0 = 2.0;
+    double std0 = 1.0;
     double nugget = 0.0;
+    bool optimize_variance = false;
     std::string method = "inverse"; // "inverse", "cholesky"
     std::string kernel = "sqexp"; // "exp", "sqexp", "nn", "gibbs"
-    read_args(argc-2, argv+2, arg_list(n, name(tseed, "seed"), length0, var0, nugget, method, kernel));
+    read_args(argc-2, argv+2, arg_list(
+        n, name(tseed, "seed"), length0, var0, std0, nugget, method, kernel, optimize_variance
+    ));
 
     vec1d xo, yo, eo, xt;
     fits::read_table(param_file, "x", xo, "y", yo, "ye", eo, "xt", xt);
@@ -25,6 +29,7 @@ int vif_main(int argc, char* argv[]) {
     matrix::mat2d koo(no,no);
     matrix::mat2d dlkoo(no,no);
     matrix::mat2d dvkoo(no,no);
+    matrix::mat2d dskoo(no,no);
     matrix::mat2d ikoo;
 
     double logpe = 0.0;
@@ -84,18 +89,28 @@ int vif_main(int argc, char* argv[]) {
     };
 
     auto get_evidence = [&](vec1d p, minimize_function_output opts) {
-        vec1d ret(3);
+        vec1d ret(1+p.size());
         double l = p[0];
-        double lv = p[1];
+        double lv, ls;
+        if (optimize_variance) {
+            lv = p[1];
+            ls = p[2];
+        } else {
+            lv = log(var0);
+            ls = p[1];
+        }
 
         for (uint_t i : range(no))
         for (uint_t j : range(i, no)) {
             koo.safe(i,j) = koo.safe(j,i) = fkernel(xo.safe[i], xo.safe[j], l, lv) +
-                (i == j ? nugget + sqr(eo[i]) : 0.0);
+                (i == j ? nugget + sqr(eo[i]) + exp(2*ls) : 0.0);
 
             if (opts == minimize_function_output::derivatives || opts == minimize_function_output::all) {
                 dlkoo.safe(i,j) = dlkoo.safe(j,i) = dfkernel_l(xo.safe[i], xo.safe[j], l, lv);
                 dvkoo.safe(i,j) = dvkoo.safe(j,i) = dfkernel_v(xo.safe[i], xo.safe[j], l, lv);
+                if (optimize_variance) {
+                    if (i == j) dskoo.safe(i,j) = dskoo.safe(j,i) = 2*exp(2*ls);
+                }
             }
         }
 
@@ -146,18 +161,36 @@ int vif_main(int argc, char* argv[]) {
             ret[1] = d1 + d2;
             vif_check(is_finite(ret[1]), "l derivative is not finite (", ret[1], " = ", d1, " + ", d2, ")");
 
-            d1 = -0.5*total(ikooyo*dvkoo*ikooyo);
-            d2 = 0.5*total(diagonal(ikoo*dvkoo));
-            ret[2] = d1 + d2;
-            vif_check(is_finite(ret[1]), "v derivative is not finite (", ret[2], " = ", d1, " + ", d2, ")");
+            if (optimize_variance) {
+                d1 = -0.5*total(ikooyo*dvkoo*ikooyo);
+                d2 = 0.5*total(diagonal(ikoo*dvkoo));
+                ret[2] = d1 + d2;
+                vif_check(is_finite(ret[2]), "v derivative is not finite (", ret[2], " = ", d1, " + ", d2, ")");
+
+                d1 = -0.5*total(ikooyo*dskoo*ikooyo);
+                d2 = 0.5*total(diagonal(ikoo*dskoo));
+                ret[3] = d1 + d2;
+                vif_check(is_finite(ret[3]), "s derivative is not finite (", ret[3], " = ", d1, " + ", d2, ")");
+            } else {
+                d1 = -0.5*total(ikooyo*dskoo*ikooyo);
+                d2 = 0.5*total(diagonal(ikoo*dskoo));
+                ret[2] = d1 + d2;
+                vif_check(is_finite(ret[2]), "s derivative is not finite (", ret[2], " = ", d1, " + ", d2, ")");
+            }
         }
 
         return ret;
     };
 
     double t = now();
+    vec1d p0;
+    if (optimize_variance) {
+        p0 = {length0, log(var0), log(std0)};
+    } else {
+        p0 = {length0, log(std0)};
+    }
     minimize_params opts;
-    minimize_result r = minimize_bfgs(opts, vec1d{length0, log(var0)}, get_evidence);
+    minimize_result r = minimize_bfgs(opts, p0, get_evidence);
     t = now() - t;
     print("time needed: ", t);
     print("success: ", r.success);
@@ -166,7 +199,14 @@ int vif_main(int argc, char* argv[]) {
     print("loge: ", -r.value);
 
     double l = r.params[0];
-    double lv = r.params[1];
+    double lv, ls;
+    if (optimize_variance) {
+        lv = r.params[1];
+        ls = r.params[2];
+    } else {
+        lv = log(var0);
+        ls = r.params[1];
+    }
 
     matrix::mat2d kto(nt,no);
     matrix::mat2d ktt(nt,nt);
@@ -174,7 +214,7 @@ int vif_main(int argc, char* argv[]) {
     for (uint_t i : range(nt))
     for (uint_t j : range(i, nt)) {
         ktt.safe(i,j) = ktt.safe(j,i) = fkernel(xt.safe[i], xt.safe[j], l, lv) +
-            (i == j ? nugget : 0.0);
+            (i == j ? nugget + exp(2*ls) : 0.0);
     }
     for (uint_t i : range(nt))
     for (uint_t j : range(no)) {
