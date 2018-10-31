@@ -1,10 +1,10 @@
 p = mrdfits('input.fits', 1, /silent)
 r = mrdfits('output.fits', 1, /silent)
 
-plot, p.x, p.y, xr=[min(p.xt), max(p.xt)], yr=[-1.2, 1.2], charsize=2, psym=5, /nodata
+plot, p.x, p.y, xr=[min(p.xt), max(p.xt)], yr=[1.2*min(p.y), 1.2*max(p.y)], charsize=2, psym=5, /nodata
 
 i = indgen(n_elements(p.xt))
-s = r.cov[i,i]
+s = sqrt(r.cov[i,i])
 
 oplot, p.xt, r.m
 oplot, p.xt, r.m - 2*s, line=2
