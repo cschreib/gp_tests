@@ -1,0 +1,333 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[top=3cm, bottom=3cm, left=3cm, right=3cm]{geometry}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{color}
+\usepackage{xspace}
+\usepackage{graphicx}
+\usepackage[leftcaption]{sidecap}
+\usepackage{enumerate}
+\usepackage[page,titletoc]{appendix}
+\usepackage{braket}
+\usepackage{subfigure}
+\usepackage{wasysym}
+\usepackage{bbm}
+\usepackage{bm}
+
+\newcommand\req[1]{Eq.\;\ref{#1}}
+\newcommand\rfig[1]{Fig.\;\ref{#1}}
+\newcommand\rapp[1]{Appendix\;\ref{#1}}
+
+\newcommand\eq[1]{\begin{align} #1 \end{align}}
+\newcommand\eqnl[1]{\begin{align*} #1 \end{align*}}
+
+\newcommand\eqc[1]{\begin{equation} #1 \end{equation}}
+\newcommand\eqcnl[1]{\begin{equation*} #1 \end{equation*}}
+\newcommand\evat[1]{\bigg|_{#1}}
+\newcommand\sameas{\Longleftrightarrow}
+\newcommand\Lsameas{\;\;\;\;\;\Longleftrightarrow\;\;\;\;\;}
+\newcommand\Limplies{\;\;\;\;\;\Longrightarrow\;\;\;\;\;}
+\newcommand\mst{<\!\!<}
+\newcommand\mgt{>\!\!>}
+\newcommand\prl{\;/\!/\;}
+\newcommand\ang{\text{\AA}}
+\newcommand\mean[1]{\left< #1 \right>}
+\newcommand{\norm}[1]{\left| #1 \right|}
+\newcommand{\snorm}[1]{| #1 |}
+\newcommand{\abs}[1]{\left| #1 \right|}
+\newcommand{\sabs}[1]{| #1 |}
+\newcommand{\lvec}[1]{\overrightarrow{#1}}
+\newcommand{\half}{\frac{1}{2}}
+\newcommand{\id}{\mathbf{1}}
+\newcommand{\tr}{\text{Tr}}
+\newcommand{\erf}{{\rm erf}}
+\newcommand{\erfc}{{\rm erfc}}
+
+\newcommand{\mad}{{\rm MAD}}
+\newcommand{\median}{{\rm median}}
+\newcommand{\logd}{\log_{10}}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\DD}{\mathrm{D}}
+\newcommand{\ddD}[1]{\mathrm{d}^{#1}}
+
+\newcommand{\emptypage}{\newpage\null\thispagestyle{empty}\newpage}
+
+\renewcommand\floatpagefraction{.9}
+\renewcommand\topfraction{.9}
+\renewcommand\bottomfraction{.9}
+\renewcommand\textfraction{.1}
+\setcounter{totalnumber}{50}
+\setcounter{topnumber}{50}
+\setcounter{bottomnumber}{50}
+
+\renewcommand\sidecaptionsep{10 mm}
+\numberwithin{equation}{section}
+
+\renewcommand{\id}{\mathbbm{1}}
+\newcommand{\ie}{i.e.\xspace}
+
+\begin{document}
+
+{\huge \bfseries Notes on Gaussian Processes\\[1.5cm]}
+
+\section{Forewords}
+
+Most of the content of these notes is extracted from {\it Gaussian Processes for Machine Learning}, by Rasmussen \& Williams. Therefore we adopt a number of their conventions. In particular, vectors are denoted as bold lowercase mathematical symbols ($\mathbf{x}$), scalars are lowercase symbols in normal font ($x$), while matrices are uppercase symbols ($X$).
+
+The section on sparse Gaussian processes in inspired from (in reverse publication order):
+\begin{itemize}
+  \item Almosallam et al.~(2016). {\it GPz : non-stationary sparse Gaussian processes for heteroscedastic uncertainty estimation in photometric redshifts}. MNRAS, 462, 726.
+  \item Almosallam et al.~(2016). {\it A sparse Gaussian process framework for photometric redshift estimation}. MNRAS, 455, 2387.
+  \item Snelson \& Ghahramani (2006). {\it Sparse Gaussian Processes using pseudo-inputs}. In Weiss Y., Sch\"olkopf B., Platt J., eds, Advances in Neural Information Processing Systems 18. MIT Press, Cambridge, MA, p.~1257.
+  \item Seeger et al.~(2003). {\it Fast forward selection to speed up sparse Gaussian process regression}. In C.~M.~Bishop and B.~J.~Frey, editors, Proceedings of the Ninth International Workshop on Artificial Intelligence and Statistics.
+\end{itemize}
+
+\section{Standard (full) GP}
+
+\subsection{Predictions from a given training set and covariance function}
+
+Suppose we have input values $\mathbf{x}$ (in general, a vector of input values, but it could be a scalar too) that are linked to an output value $y$. We have a training set, \{$\mathbf{x_t}$,$y_t$\}, which is the stuff we know. We have a test set, \{$\mathbf{x_*}$,$y_*$\}, which is the stuff for which we want to make a prediction. We denote $X_t = \{\mathbf{x_t}\}$ the set of training inputs, and $X_* = \{\mathbf{x_*}\}$ the set of test inputs, both of which are given. We denote $\mathbf{y} = \{y\}$ the set of output training values, which are also given, and $\mathbf{y_*} = \{y_*\}$ the set of test output values, which are unknown. Our job is to make a prediction for what $\mathbf{y_*}$ should be.
+
+In the GP approach, we use a probabilistic approach to model the \emph{process} $y|\mathbf{x}$ that describes the training data. This is called a ``process'' rather than a ``function'' (i.e., $y = f(\mathbf{x})$) because the values $y$ are evaluated from some unattainable function $f$ that is itself drawn from a ``distribution of functions''. To do so we must therefore assume a ``prior on functions'' which is determined by a covariance function $k(\mathbf{x}_i, \mathbf{x}_j)$. From this covariance function, we can form several covariance matrices involving inputs from both the training and the test sets:
+\begin{align}
+K_{tt} &: K_{tt,ij} = k(\mathbf{x_t}_{,i},\mathbf{x_t}_{,j})\,, \\
+K_{**} &: K_{**,ij} = k(\mathbf{x_*}_{,i},\mathbf{x_*}_{,j})\,, \\
+K_{t*} &: K_{t*,ij} = k(\mathbf{x_t}_{,i},\mathbf{x_*}_{,j})\,,
+\end{align}
+
+This covariance function serves to model our training set with the following Gaussian Process:
+\begin{align}
+\mathbf{y_t} | X_t \sim \mathcal{N}(\mathbf{\bar{y}_t},K_{tt})\,
+\end{align}
+where $\mathbf{\bar{y}_t}$ is the mean of the prior, which is assumed to be zero in all that follows. If we want a non zero prior, it can be easily implemented by subtracting this non-zero prior from the training output values $\mathbf{y_t}$ before the training stage, and then adding it back to the predicted test output values $\mathbf{y_*}$ at the very end of the calculations. Therefore, in what follows, we assume:
+\begin{align}
+\mathbf{y_t} | X_t \sim \mathcal{N}(0,K_{tt})\,. \label{EQ:full_prior}
+\end{align}
+
+The key prediction of the GP is that the values of $\mathbf{y_*}$, given we know the training data $X_t$ and $\mathbf{y_t}$ as well as the new positions $X_*$, are drawn from a Gaussian distribution of mean $\mathbf{\bar{y}_*}$ and covariance matrix $C_*$:
+\begin{align}
+\mathbf{y_*} | X_*, X_t, \mathbf{y_t} \sim \mathcal{N}(\mathbf{\bar{y}_*}, C_*)\,,
+\end{align}
+with:
+\begin{align}
+\mathbf{\bar{y}_*} &= {K_{t*}}^T\,{K_{tt}}^{-1}\,\mathbf{y_t}\, \\
+C_* &= K_{**} - {K_{t*}}^T\,{K_{tt}}^{-1}\,K_{t*}\,.
+\end{align}
+
+Given a choice of a covariance function $k$, we can use the above two equations to make predictions for $\mathbf{y_*}$; all we need to do is build the $K$ matrices by evaluating the function $k$, invert $K_{tt}$, and do simple matrix/vector multiplications and additions above. Once $\mathbf{\bar{y}_*}$ and $C_*$ are computed, we can use a random number generator to build a set of random variables that follow the joint distribution $\mathcal{N}(\mathbf{\bar{y}_*}, C_*)$. For $N$ test output values, this is done by computing the Cholesky decomposition $C_* = L_*\,L_*^T$, generate $N$ Gaussian random numbers $u_i$ with variance unity and mean zero, namely $\mathbf{u} \sim \mathcal{N}(0, 1)$, and we then obtain one realization of our prediction using $\mathbf{y_*} = \mathbf{\bar{y}_*} + L_*\,\mathbf{u}$.
+
+\subsection{Training the covariance function}
+
+The problem is then to decide how to choose the covariance function. In general this covariance function will depend on several ``hyperparameters'' ${\bm\theta} = \{\theta_i\}$, which define its amplitude and shape. In the calculation above, these hyperparameters are fixed, and used to make a prediction. But some choices of hyperparameters may provide better predictions than others. Ideally, in a fully probabilistic approach, we would marginalize over these hyperparameters to make our predictions, however in practice this is simply too hard. A much simpler way is to optimize these hyperparameters by maximizing the marginal likelihood on the training set, namely $p(\mathbf{y_t}|X_t)$. Given \req{EQ:full_prior}, this likelihood is simply given by our assumed prior $\mathbf{y_t} | X_t \sim \mathcal{N}(0,K_{tt})$, which translates to:
+\begin{align}
+p(\mathbf{y_t} | X_t) = \frac{\exp\left(-\frac{1}{2}\,\mathbf{y_t}^T\,{K_{tt}}^{-1}\,\mathbf{y_t}\right)}{(2\pi)^{n_t/2}\,\sqrt{\abs{K_{tt}}}}\,,
+\end{align}
+where $\abs{K_{tt}}$ is the determinant of the covariance matrix, and $n_t$ is the number of objects in the training set. By optimizing this quantity, we will pick the best hyperparameters as a trade off of between, on the one hand, providing the best fit to the training data (maximizing the exponential term), and on the other hand, using the simplest possible model (minimizing the determinant).
+
+In practice it is easier to minimize:
+\begin{align}
+\mathcal{L} \equiv -2\,\log p(\mathbf{y_t} | X_t) = \mathbf{y_t}^T\,{K_{tt}}^{-1}\,\mathbf{y_t} + \log \abs{K_{tt}} + n_t\log(2\pi)\,.
+\end{align}
+This can be efficiently evaluated by computing the Cholesky decomposition $K_{tt} = L_t\,{L_t}^T$, use it to solve for ${K_{tt}}\,\mathbf{\tilde{y}_t} = \,\mathbf{y_t}$, and compute $\log \abs{K_{tt}}$ using the trace of $\log L_t$:
+\begin{align}
+\mathcal{L} = \mathbf{y_t}^T\,\mathbf{\tilde{y}_t} + 2\,\tr\left(\log L_t\right) + n_t\,\log(2\pi)\,.
+\end{align}
+Using the trace of the log is more numerically stable than computing the log of the product of the diagonal elements of $L_t$, which can easily underflow.
+
+To perform the minimization using standard gradient descent algorithms, we also need to compute the derivative of this quantity with respect to each hyperparameter:
+\begin{align}
+\frac{\partial \mathcal{L}}{\partial \theta_i} = \tr\left({K_{tt}}^{-1}\,\frac{\partial K_{tt}}{\partial \theta_i}\right) - \mathbf{y_t}^T\,{K_{tt}}^{-1}\,\frac{\partial K_{tt}}{\partial \theta_i}\,{K_{tt}}^{-1}\,\mathbf{y_t}\,,
+\end{align}
+where $\frac{\partial K_{tt}}{\partial \theta_i}$ is constructed as:
+\begin{align}
+\frac{\partial K_{tt,ij}}{\partial \theta_i} = \frac{\partial k(\mathbf{x_t}_{,i},\mathbf{x_t}_{,j})}{\partial \theta_i}\,,
+\end{align}
+and the trace term can be optimized by only computing the diagonal elements of the matrix product.
+
+Re-using $\mathbf{\tilde{y}_t}$ as computed above, this can be evaluated more efficiently as
+\begin{align}
+\frac{\partial \mathcal{L}}{\partial \theta_i} = \tr\left({K_{tt}}^{-1}\,\frac{\partial K_{tt}}{\partial \theta_i}\right) - {\mathbf{\tilde{y}_t}}\mkern 0mu^T\,\frac{\partial K_{tt}}{\partial \theta_i}\,\mathbf{\tilde{y}_t}\,.
+\end{align}
+
+This is the fastest way to compute the marginal likelihood exactly, however the Cholesky decomposition is still an $O({n_t}^3)$ operation, therefore it does not scale well for large inputs; this is where a Sparse Gaussian Process becomes useful.
+
+
+\section{The squared exponential covariance function}
+
+A general form for the commonly used ``squared exponential'' covariance is:
+\begin{align}
+k(\mathbf{x}_i,\mathbf{x}_j) = \sigma_v^2\,\exp\left(-\frac{1}{2}(\mathbf{x}_i - \mathbf{x}_j)^T\,Q\,(\mathbf{x}_i - \mathbf{x}_j)\right) + \delta_{ij}\,\sigma_n^2\,,
+\end{align}
+in which $Q$ is a ``direction matrix'' which controls the directions and scale lengths of the covariances. A simpler form, where the covariance scale-length is the same in all dimensions of the input space is:
+\begin{align}
+k(\mathbf{x}_i,\mathbf{x}_j) = \sigma_v^2\,\exp\left(-\frac{1}{2}\frac{(\mathbf{x}_i - \mathbf{x}_j)^T(\mathbf{x}_i - \mathbf{x}_j)}{\ell^2}\right) + \delta_{ij}\,\sigma_n^2\,,
+\end{align}
+which, for the one-dimensional case, translates to:
+\begin{align}
+k(x_i,x_j) = \sigma_v^2\,\exp\left(-\frac{1}{2}\frac{(x_i - x_j)^2}{\ell^2}\right) + \delta_{ij}\,\sigma_n^2\,.
+\end{align}
+
+\begin{itemize}
+  \item $\sigma_v$ controls how far away from zero the ``true'' smooth function values are allowed to go (i.e., the amplitude of the function).
+  \item $\ell$ (or the elements of the matrix $Q$) control the distance (and, for $Q$, the directions) over which neighboring points should have similar values (i.e., how smooth the function is).
+  \item $\sigma_n$ controls the amount of uncorrelated noise on top of that smooth function (i.e., how much random scatter there is on top of the smooth function).
+\end{itemize}
+
+For $\sigma_n$, the $\delta_{ij}$ factor means that this noise term should only be added for two identical input points $\mathbf{x}_i$, namely, not just identical in value, but identical as entities (e.g., a point in the input \emph{training} set with the same value as a point in the input \emph{test} set are not the same entities, therefore they should not have a noise term even though their values coincide). This serves to model the noise in the observed values for the \emph{training} set (hence $\sigma_n$ is usually known and given), and in most cases we do not want to propagate this noise into the predictions. In practice, this means this noise term should be added to the training covariance matrix $K_{tt}$, but not to $K_{**}$ or $K_{*t}$.
+
+However, it is also possible that the model should have some extra uncorrelated noise, which can be useful to model an uncertainty in the prediction that is unrelated to measurement noise and instead introduce an inherent variance in how well $y$ can be estimated from $x$ even when we know the mean prediction very precisely. In this case one would replace $\delta_{ij}\,\sigma_n^2$ by $\delta_{ij}\,(\sigma_n^2 + \sigma_m^2)$, where $\sigma_m^2$ is a ``model'' variance. These two noise terms would be added to the training covariance matrix $K_{tt}$, while the test covariance matrix $K_{**}$ would only get the $\sigma_m$ term, and the mixed matrix $K_{*t}$ would get neither. Note, however, that this model can only work if $\sigma_n$ is known and given as input (i.e., because we know the actual noise on our measurements). If $\sigma_n$ is not known, then there is mathematically no way to disentangle measurement noise ($\sigma_n$) from model variance ($\sigma_m$).
+
+\section{Sparse GP (SPGP)}
+
+\subsection{Formula for GP predictions}
+
+As described above, evaluating the likelihood of a GP for large data sets can become too expensive because of the need to inverse an $n_t \times n_t$ matrix (or doing its Cholesky decomposition, which is faster but has the same algorithmic complexity). To cope with this, several approximations are possible, and one of them are Sparse GPs (Snelson \& Ghahramani 2006), or SPGPs. In this approximation, we introduce $n_p$ ``pseudo inputs'' locations $X_p = \{\mathbf{x}_p\}$ that we can freely adjust, and use these to solve the GP. The covariance matrix we need to invert is now $K_{pp}$, which is evaluated at the pseudo inputs, and is of size $n_p \times n_p$. If we choose $n_p \ll n_t$, then the computations become much faster; $O({n_p}^2\,n_t)$ instead of $O({n_t}^3)$, and the results will become an approximation that still preserves a number of properties of full GPs. In practice it can be an excellent approximation if the pseudo inputs are chosen carefully, and in fact they can be optimized like any other hyperparameter.
+
+This approximation can be understood as follows. In the full GP, the prediction for the mean posterior function can reformulated as a sum over the training set of the covariance function, evaluated with the test input used as one $\mathbf{x}$:
+\begin{align}
+\bar{y}_*(\mathbf{x_*}) = \sum_i^{n_t} c_i\,k(\mathbf{x_t}_{,i}, \mathbf{x_*})\,,
+\end{align}
+with the weighting coefficients $c_i$ learned to fit the training output $\mathbf{y}$. The SPGP approximation simplifies this model by summing instead over the (fewer) $n_p$ chosen pseudo inputs:
+\begin{align}
+\bar{y}_*(\mathbf{x_*}) = \sum_i^{n_p} d_i\,k(\mathbf{x_p}_{,i}, \mathbf{x_*})\,,
+\end{align}
+and the new weighting coefficients $d_i$ are still learned to fit the training output $\mathbf{y}$. In fact, this illustrates one advantage of the SPGP over the full GP: the pseudo inputs can in principle lie outside of the training set, and this flexibility can offer a better description of the data.
+
+Since the pseudo output values $\mathbf{y_p}$ (obtained at the location of the pseudo inputs $X_p$) are unknown, we must marginalized over them. Assuming they have the same prior for the pseudo outputs as for the real data, the GP prediction becomes:
+\begin{align}
+\mathbf{y_*} | X_*, X_t, \mathbf{y_t}, X_p \sim \mathcal{N}(\mathbf{\bar{y}_*}, C_*)\,,
+\end{align}
+with:
+\begin{align}
+\mathbf{\bar{y}_*} &= {K_{p*}}^T\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\mathbf{y_t}\, \\
+C_* &= K_{**} - {K_{p*}}^T\,({K_{pp}}^{-1} - Q^{-1})\,K_{p*}\,,
+\end{align}
+and where:
+\begin{align}
+Q &= K_{pp} + {K_{tp}}^T\,\Lambda^{-1}\,K_{tp}\, \\
+\Lambda_{ii} &= K_{tt,ii} - \mathbf{k_{tp}}_{,i}\,{K_{pp}}^{-1}\,{\mathbf{k_{tp}}_{,i}}^T \,,
+\end{align}
+using the notation $\mathbf{k_{tp}}_{,i}$ to mean the $i$th row of the $K_{tp}$ matrix, so the second term in that last equation is an inner product over the $n_p$ pseudo inputs. The matrix $Q$ is $n_p \times n_p$, while $\Lambda$ is diagonal and is thus cheap to invert.
+
+\subsection{Optimization of hyperparameters}
+
+The marginal likelihood, transformed again as $\mathcal{L} = -2\,\log p(\mathbf{y_t} | X_t)$, becomes:
+\begin{align}
+\mathcal{L} = \mathbf{y_t}^T\,(K_{tp}\,{K_{pp}}^{-1}\,{K_{tp}}^T + \Lambda)^{-1}\,\mathbf{y_t} &+ \log \abs{K_{tp}\,{K_{pp}}^{-1}\,{K_{tp}}^T + \Lambda} + n_t\,\log(2\pi)\,.
+\end{align}
+This is not good however, because it still implies $n_t \times n_t$ matrices. Using some algebra (see appendix on matrix identities in Rasmussen \& Williams), the first and second terms can be reformulated as:
+\begin{align}
+\mathbf{y_t}^T\,(K_{tp}\,{K_{pp}}^{-1}\,{K_{tp}}^T + \Lambda)^{-1}\,\mathbf{y_t} &= \mathbf{y_t}^T\,\Lambda^{-1}\,\mathbf{y_t} - \mathbf{y_t}^T\,\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\mathbf{y_t}\, \\
+\log \abs{K_{tp}\,{K_{pp}}^{-1}\,{K_{tp}}^T + \Lambda} &= \tr\left(\log \Lambda\right) + \log\left[\abs{K_{pp}^{-1}}\,\abs{K_{pp} + {K_{tp}}^T\,\Lambda^{-1}\,K_{tp}}\right] \nonumber \\
+\end{align}
+which both involve inverting $n_p \times n_p$ matrices and $\Lambda$, which is much cheaper to evaluate.
+
+Alternatively, following Seeger et al.~(2003) and using similar algebraic tricks, if we do the Cholesky decomposition $K_{pp} = L_p\,{L_p}^T$, and define $V = {L_p}^{-1}\,{K_{tp}}^T$ and $M = 1 + V\,\Lambda^{-1}\,V^T$, then further decompose $M = L_M\,{L_M}^{T}$ to define ${\bm \beta} = {L_M}^{-1}\,V\,\Lambda^{-1}\,\mathbf{y_t}$, we get the simpler formula:
+\begin{align}
+\mathcal{L} = \mathbf{y_t}^T\,\Lambda^{-1}\,\mathbf{y_t} - {\bm \beta}^{T} {\bm \beta} + \tr\left(\log \Lambda\right) + 2\,\tr\left(\log L_M\right) + n_t\,\log(2\pi)\,.
+\end{align}
+The details of the calculations can be found in \rapp{APP:detail_mlik_spgp}.
+
+\appendix
+
+\section{Detail of calculations}
+
+\subsection{Marginal likelihood for SPGP \label{APP:detail_mlik_spgp}}
+
+\begin{align}
+\mathbf{y_t}^T\,(K_{tp}\,{K_{pp}}^{-1}\,{K_{tp}}^T + \Lambda)^{-1}\,\mathbf{y_t}
+ &= \mathbf{y_t}^T\,(K_{tp}\,{L_p}^{-1,T}{L_p}^{-1}\,{K_{tp}}^T + \Lambda)^{-1}\,\mathbf{y_t} \\
+ &= \mathbf{y_t}^T\,(V^T V + \Lambda)^{-1}\,\mathbf{y_t} \\
+ &= \mathbf{y_t}^T\,(\Lambda^{-1} - \Lambda^{-1}\,V^T\,(1 + V\,\Lambda^{-1}\,V^T)^{-1}\,V\,\Lambda^{-1})\,\mathbf{y_t} \\
+ &= \mathbf{y_t}^T\,(\Lambda^{-1} - \Lambda^{-1}\,V^T\,M^{-1}\,V\,\Lambda^{-1})\,\mathbf{y_t} \\
+ &= \mathbf{y_t}^T\,(\Lambda^{-1} - \Lambda^{-1}\,V^T\,{L_M}^{-1,T}\,{L_M}^{-1}\,V\,\Lambda^{-1})\,\mathbf{y_t} \\
+ &= \mathbf{y_t}^T\,\Lambda^{-1}\,\mathbf{y_t} - {\bm \beta}^T{\bm \beta}
+\end{align}
+
+\begin{align}
+\log \abs{K_{tp}\,{K_{pp}}^{-1}\,{K_{tp}}^T + \Lambda}
+ &= \log \abs{K_{tp}\,{L_p}^{-1,T}{L_p}^{-1}\,{K_{tp}}^T + \Lambda} \\
+ &= \log \abs{V^T V + \Lambda} \\
+ &= \log \abs{\Lambda} + \log \abs{1 + V\,\Lambda^{-1}\,V} \\
+ &= \log \abs{\Lambda} + \log \abs{M} \\
+ &= \log \abs{\Lambda} + \log \abs{L_M}^2 \\
+ &= \tr \left(\log \Lambda \right) + 2\,\tr \left(\log L_M \right)
+\end{align}
+
+\subsection{Derivatives of marginal likelihood for SPGP \label{APP:detail_mlik_der_spgp}}
+
+\begin{align}
+\frac{\partial}{\partial \theta_\ell}\left(\mathbf{y_t}^T\,\Lambda^{-1}\,\mathbf{y_t}\right)
+  &= \mathbf{y_t}^T\,\frac{\partial}{\partial \theta_\ell}\left(\Lambda^{-1}\right)\,\mathbf{y_t} \\
+  &= \mathbf{y_t}^T\,\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,\mathbf{y_t}
+\end{align}
+
+\begin{align}
+\frac{\partial \Lambda_{ii}}{\partial \theta_\ell}
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \frac{\partial}{\partial \theta_\ell}\left(\mathbf{k_{tp}}_{,i}\,{K_{pp}}^{-1}\,{\mathbf{k_{tp}}_{,i}}^T\right) \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \frac{\partial}{\partial \theta_\ell}\left(\mathbf{k_{tp}}_{,i}\,{L_{p}}^{-1,T}\,{L_p}^{-1}\,{\mathbf{k_{tp}}_{,i}}^T\right) \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \frac{\partial}{\partial \theta_\ell}\left(V^T V\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \frac{\partial}{\partial \theta_\ell}\left(\sum_j {V_{ji}}^2\right) \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - 2\left(\sum_j V_{ji} \frac{\partial V_{ji}}{\partial \theta_\ell}\right) \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - 2\left(V^T \frac{\partial V}{\partial \theta_\ell}\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - 2\left(V^T \frac{\partial }{\partial \theta_\ell}[{L_p}^{-1}\,{K_{tp}}^{T}]\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - 2\left(V^T \left[{L_p}^{-1}\,\frac{\partial {K_{tp}}^{T}}{\partial \theta_\ell} + \frac{\partial }{\partial \theta_\ell}{L_p}^{-1}\,{K_{tp}}^{T}\right]\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - 2\left(V^T \left[{L_p}^{-1}\,\frac{\partial {K_{tp}}^{T}}{\partial \theta_\ell} - {L_p}^{-1}\,\frac{\partial L_p}{\partial \theta_\ell}\,{L_p}^{-1}\,{K_{tp}}^{T}\right]\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - 2\left(V^T {L_p}^{-1}\,\left[\frac{\partial {K_{tp}}^{T}}{\partial \theta_\ell} - \frac{\partial L_p}{\partial \theta_\ell}\,V\right]\right)_{ii} \\
+\end{align}
+
+\begin{align}
+\frac{\partial \Lambda_{ii}}{\partial \theta_\ell}
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \frac{\partial}{\partial \theta_\ell}\left(\mathbf{k_{tp}}_{,i}\,{K_{pp}}^{-1}\,{\mathbf{k_{tp}}_{,i}}^T\right) \\ \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \frac{\partial}{\partial \theta_\ell}\left(K_{tp}\,{K_{pp}}^{-1}\,K_{tp}^T\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \left(\frac{\partial K_{tp}}{\partial \theta_\ell}\,{K_{pp}}^{-1}\,K_{tp}^T + K_{tp}\,\frac{\partial {K_{pp}}^{-1}}{\partial \theta_\ell}\,K_{tp}^T + K_{tp}\,{K_{pp}}^{-1}\,\frac{\partial K_{tp}^T}{\partial \theta_\ell}\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \left(2\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,{K_{pp}}^{-1}\,K_{tp}^T + K_{tp}\,\frac{\partial {K_{pp}}^{-1}}{\partial \theta_\ell}\,K_{tp}^T\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \left(2\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,{K_{pp}}^{-1}\,K_{tp}^T + K_{tp}\,{K_{pp}}^{-1}\,\frac{\partial K_{pp}}{\partial \theta_\ell}\,{K_{pp}}^{-1}\,K_{tp}^T\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \left(2\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,{L_{p}}^{-1,T}\,V + V^T\,{L_p}^{-1}\,\frac{\partial K_{pp}}{\partial \theta_\ell}\,{L_{p}}^{-1,T}\,V\right)_{ii} \\
+\end{align}
+\begin{align}
+\frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right)
+  &= \frac{\partial }{\partial \theta_\ell}\left(\mathbf{y_t}^T\,\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\mathbf{y_t}\right) \\
+  &= \mathbf{y_t}^T\,\frac{\partial }{\partial \theta_\ell}\left(\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\right)\,\mathbf{y_t} \\
+\end{align}
+\begin{align}
+\frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right) = \mathbf{y_t}^T\,[
+   &\frac{\partial }{\partial \theta_\ell}\left(\Lambda^{-1}\right)\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\\
+   &+\Lambda^{-1}\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1} \\
+   &+\Lambda^{-1}\,K_{tp}\,\frac{\partial }{\partial \theta_\ell}\left(Q^{-1}\right)\,{K_{tp}}^T\,\Lambda^{-1} \\
+   &+\Lambda^{-1}\,K_{tp}\,Q^{-1}\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell}\,\Lambda^{-1} \\
+   &+\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\frac{\partial }{\partial \theta_\ell}\left(\Lambda^{-1}\right) \\
+   &]\,\mathbf{y_t} \\
+\frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right) = \mathbf{y_t}^T\,[
+   &\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\\
+   &+\Lambda^{-1}\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1} \\
+   &+\Lambda^{-1}\,K_{tp}\,Q^{-1}\,\frac{\partial Q}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1} \\
+   &+\Lambda^{-1}\,K_{tp}\,Q^{-1}\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell}\,\Lambda^{-1} \\
+   &+\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1} \\
+   &]\,\mathbf{y_t} \\
+\frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right) = \mathbf{y_t}^T\Lambda^{-1}\,\,[
+   &2\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\\
+   &+2\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T \\
+   &+K_{tp}\,Q^{-1}\,\frac{\partial Q}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T \\
+   &]\,\Lambda^{-1}\,\mathbf{y_t}
+\end{align}
+\begin{align}
+\frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right) = \mathbf{y_t}^T\Lambda^{-1}\,\,\left[2\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp}
+   +2\,\frac{\partial K_{tp}}{\partial \theta_\ell}
+   +K_{tp}\,Q^{-1}\,\frac{\partial Q}{\partial \theta_\ell}
+   \right]\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\mathbf{y_t} \label{EQ:app_dbeta}
+\end{align}
+\begin{align}
+\frac{\partial Q}{\partial \theta_\ell}
+  &= \frac{\partial}{\partial \theta_\ell} \left(K_{pp} + {K_{tp}}^T\,\Lambda^{-1}\,K_{tp}\right) \\
+  &= \frac{\partial K_{pp}}{\partial \theta_\ell} + \frac{\partial}{\partial \theta_\ell}\left({K_{tp}}^T\,\Lambda^{-1}\,K_{tp}\right) \\
+  &= \frac{\partial K_{pp}}{\partial \theta_\ell} + 2\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp} + {K_{tp}}^T\,\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp}
+\end{align}
+Warning: the above is only true when $\partial Q/\partial \theta_\ell$ is sandwitched by an inner product, as in \ref{EQ:app_dbeta}.
+
+\end{document}
+
