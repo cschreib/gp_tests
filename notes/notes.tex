@@ -247,13 +247,13 @@ with:
 \end{align}
 The details of the calculations can be found in \rapp{APP:detail_mlik_der_spgp}, as well as in Snelson (2007).
 
-Again, following Seeger et al.~(2003), we can define $B = {L_Q}^{-1,T}\,{L_M}^{-1}\,V\,\Lambda^{-1} = Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}$, $\mathbf{b} = B\,\mathbf{y_t}$, and $\mathbf{\tilde{y}_t} = \Lambda^{-1}\,\mathbf{y_t}$. Then the above can be reformulated as:
+Again, following Seeger et al.~(2003), we can define $B = {L_Q}^{-1,T}\,{L_M}^{-1}\,V\,\Lambda^{-1} = Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}$, $\mathbf{b} = B\,\mathbf{y_t}$, $\mathbf{\tilde{y}_t} = \Lambda^{-1}\,\mathbf{y_t}$, and $\mathbf{m} = B^T\,Q\,\mathbf{b}$. Then the above can be reformulated as:
 \begin{align}
 \frac{\partial \mathcal{L}}{\partial \theta_\ell} =
-  &-\mathbf{\tilde{y}_t}^T\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\mathbf{\tilde{y}_t} + 2\,\mathbf{\tilde{y}_t}^T\,\left[\frac{\partial \Lambda}{\partial \theta_\ell}\,B^T\,Q - \frac{\partial K_{tp}}{\partial \theta_\ell}\right]\,\mathbf{b} + \mathbf{b}^T\,Q\,B\,\left[-\frac{\partial \Lambda}{\partial \theta_\ell}\,B^T\,Q + 2\,\frac{\partial K_{tp}}{\partial \theta_\ell}\right]\mathbf{b} \nonumber \\
-  &+\mathbf{b}^T\,\frac{\partial K_{pp}}{\partial \theta_\ell}\,\mathbf{b} + \tr\left[\left(\Lambda^{-1} - B^T Q\,B\right)\,\frac{\partial \Lambda}{\partial \theta_\ell}\right] + \tr\left[\left(Q^{-1} - {K_{pp}}^{-1}\right)\,\frac{\partial K_{pp}}{\partial \theta_\ell}\right] + 2\,\tr\left(B\,\frac{\partial K_{tp}}{\partial \theta_\ell}\right)
+  &-(\mathbf{\tilde{y}_t} - \mathbf{m})^T\,\frac{\partial \Lambda}{\partial \theta_\ell}\,(\mathbf{\tilde{y}_t} - \mathbf{m}) - 2\,(\mathbf{\tilde{y}_t} - \mathbf{m})^T\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,\mathbf{b} + \mathbf{b}^T\,\frac{\partial K_{pp}}{\partial \theta_\ell}\,\mathbf{b} \nonumber \\
+  & + \tr\left[\left(\Lambda^{-1} - B^T Q\,B\right)\,\frac{\partial \Lambda}{\partial \theta_\ell}\right] + \tr\left[\left(Q^{-1} - {K_{pp}}^{-1}\right)\,\frac{\partial K_{pp}}{\partial \theta_\ell}\right] + 2\,\tr\left(B\,\frac{\partial K_{tp}}{\partial \theta_\ell}\right)
 \end{align}
-Note that Seeger et al.~(2003) used a less accurate approximation scheme to build their sparse GP (see discussion in Snelson \& Ghahramani 2006), in which $\Lambda = {\sigma_n}^{2}\,{\bm 1}$; their equations can be recovered with this substitution (and provided we define $\mathbf{m} = B^T\,Q\,\mathbf{b}$, since they omitted to define it in their derivations).
+Note that Seeger et al.~(2003) used a less accurate approximation scheme to build their sparse GP (see discussion in Snelson \& Ghahramani 2006), in which $\Lambda = {\sigma_n}^{2}\,{\bm 1}$; their equations can be recovered with this substitution.
 
 \subsection{Special case of squared exponential kernel in 1D}
 
