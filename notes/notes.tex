@@ -82,6 +82,7 @@ The section on sparse Gaussian processes in inspired from (in reverse publicatio
 \begin{itemize}
   \item Almosallam et al.~(2016). {\it GPz : non-stationary sparse Gaussian processes for heteroscedastic uncertainty estimation in photometric redshifts}. MNRAS, 462, 726.
   \item Almosallam et al.~(2016). {\it A sparse Gaussian process framework for photometric redshift estimation}. MNRAS, 455, 2387.
+  \item Snelson (2007). {\it Flexible and efficient Gaussian process models for machine learning}. PhD thesis, Gatsby Computational Neuroscience Unit, University College London.
   \item Snelson \& Ghahramani (2006). {\it Sparse Gaussian Processes using pseudo-inputs}. In Weiss Y., Sch\"olkopf B., Platt J., eds, Advances in Neural Information Processing Systems 18. MIT Press, Cambridge, MA, p.~1257.
   \item Seeger et al.~(2003). {\it Fast forward selection to speed up sparse Gaussian process regression}. In C.~M.~Bishop and B.~J.~Frey, editors, Proceedings of the Ninth International Workshop on Artificial Intelligence and Statistics.
 \end{itemize}
@@ -187,17 +188,17 @@ However, it is also possible that the model should have some extra uncorrelated 
 
 As described above, evaluating the likelihood of a GP for large data sets can become too expensive because of the need to inverse an $n_t \times n_t$ matrix (or doing its Cholesky decomposition, which is faster but has the same algorithmic complexity). To cope with this, several approximations are possible, and one of them are Sparse GPs (Snelson \& Ghahramani 2006), or SPGPs. In this approximation, we introduce $n_p$ ``pseudo inputs'' locations $X_p = \{\mathbf{x}_p\}$ that we can freely adjust, and use these to solve the GP. The covariance matrix we need to invert is now $K_{pp}$, which is evaluated at the pseudo inputs, and is of size $n_p \times n_p$. If we choose $n_p \ll n_t$, then the computations become much faster; $O({n_p}^2\,n_t)$ instead of $O({n_t}^3)$, and the results will become an approximation that still preserves a number of properties of full GPs. In practice it can be an excellent approximation if the pseudo inputs are chosen carefully, and in fact they can be optimized like any other hyperparameter.
 
-This approximation can be understood as follows. In the full GP, the prediction for the mean posterior function can reformulated as a sum over the training set of the covariance function, evaluated with the test input used as one $\mathbf{x}$:
+The philosophy behind this approximation can be understood as follows. In the full GP, the prediction for the mean posterior function can reformulated as a weighted sum of the values in the training set:
 \begin{align}
-\bar{y}_*(\mathbf{x_*}) = \sum_i^{n_t} c_i\,k(\mathbf{x_t}_{,i}, \mathbf{x_*})\,,
+\bar{y}_*(\mathbf{x_*}) = \sum_i^{n_t} c_{t}(\mathbf{x_*}, \mathbf{x_t}_{,i})\,y_{t,i}\,,
 \end{align}
-with the weighting coefficients $c_i$ learned to fit the training output $\mathbf{y}$. The SPGP approximation simplifies this model by summing instead over the (fewer) $n_p$ chosen pseudo inputs:
+with the weighting function $c_{t}$ itself being only dependent on the inputs $\mathbf{x}$ of the training and test sets through the covariance function, and not on the observed outputs ($c_{t}(\mathbf{x_*}_{,j}, \mathbf{x_t}_{,i}) = ({K_{t*}}^T {K_{tt}}^{-1})_{ji}$). The SPGP approximation simplifies this model by summing instead over the (fewer) $n_p$ chosen pseudo inputs:
 \begin{align}
-\bar{y}_*(\mathbf{x_*}) = \sum_i^{n_p} d_i\,k(\mathbf{x_p}_{,i}, \mathbf{x_*})\,,
+\bar{y}_*(\mathbf{x_*}) = \sum_i^{n_p} c_{p}(\mathbf{x_*}, \mathbf{x_p}_{,i}, X_t)\,y_{p,i}\,,
 \end{align}
-and the new weighting coefficients $d_i$ are still learned to fit the training output $\mathbf{y}$. In fact, this illustrates one advantage of the SPGP over the full GP: the pseudo inputs can in principle lie outside of the training set, and this flexibility can offer a better description of the data.
+were the new weighting coefficients $c_{p,i}$ depend internally on the inputs of all sets, namely training inputs, pseudo inputs, and test inputs. When using fewer pseudo inputs than training inputs, the sum above should be less flexible in prediction data. However, the introduction of an extra ``pseudo'' set of data is an advantage of the SPGP over the full GP: the pseudo inputs can in principle lie outside of the training set, and this flexibility can offer a better description of the data compared to full GP.
 
-Since the pseudo output values $\mathbf{y_p}$ (obtained at the location of the pseudo inputs $X_p$) are unknown, we must marginalized over them. Assuming they have the same prior for the pseudo outputs as for the real data, the GP prediction becomes:
+Since the pseudo output values $\mathbf{y_p}$ (obtained at the location of the pseudo inputs $X_p$) are unknown, we must marginalize over them. Assuming the same prior for the pseudo outputs as for the real data, the GP prediction becomes (Snelson \& Ghahramani 2006):
 \begin{align}
 \mathbf{y_*} | X_*, X_t, \mathbf{y_t}, X_p \sim \mathcal{N}(\mathbf{\bar{y}_*}, C_*)\,,
 \end{align}
@@ -222,7 +223,7 @@ The marginal likelihood, transformed again as $\mathcal{L} = -2\,\log p(\mathbf{
 This is not good however, because it still implies $n_t \times n_t$ matrices. Using some algebra (see appendix on matrix identities in Rasmussen \& Williams), the first and second terms can be reformulated as:
 \begin{align}
 \mathbf{y_t}^T\,(K_{tp}\,{K_{pp}}^{-1}\,{K_{tp}}^T + \Lambda)^{-1}\,\mathbf{y_t} &= \mathbf{y_t}^T\,\Lambda^{-1}\,\mathbf{y_t} - \mathbf{y_t}^T\,\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\mathbf{y_t}\, \\
-\log \abs{K_{tp}\,{K_{pp}}^{-1}\,{K_{tp}}^T + \Lambda} &= \tr\left(\log \Lambda\right) + \log\left[\abs{K_{pp}^{-1}}\,\abs{K_{pp} + {K_{tp}}^T\,\Lambda^{-1}\,K_{tp}}\right] \nonumber \\
+\log \abs{K_{tp}\,{K_{pp}}^{-1}\,{K_{tp}}^T + \Lambda} &= \tr\left(\log \Lambda\right) + \log \abs{K_{pp}^{-1}} + \log \abs{Q} \nonumber \\
 \end{align}
 which both involve inverting $n_p \times n_p$ matrices and $\Lambda$, which is much cheaper to evaluate.
 
@@ -230,7 +231,45 @@ Alternatively, following Seeger et al.~(2003) and using similar algebraic tricks
 \begin{align}
 \mathcal{L} = \mathbf{y_t}^T\,\Lambda^{-1}\,\mathbf{y_t} - {\bm \beta}^{T} {\bm \beta} + \tr\left(\log \Lambda\right) + 2\,\tr\left(\log L_M\right) + n_t\,\log(2\pi)\,.
 \end{align}
-The details of the calculations can be found in \rapp{APP:detail_mlik_spgp}.
+The details of the calculations can be found in \rapp{APP:detail_mlik_spgp}. By identification with the previous longer formula, we find that $Q^{-1} = {L_p}^{-1,T}{L_M}^{-1,T}{L_M}^{-1}{L_p}^{-1}$. If we do the Cholesky decomposition $Q = L_Q\,{L_Q}^T$, then $Q^{-1} = {L_Q}^{-1,T}\,{L_Q}^{-1}$, and by identification $L_Q = L_p\,L_M$.
+
+The formula for the derivatives of the marginal likelihood with respect to the hyperparameters is not as simple:
+\begin{align}
+\frac{\partial \mathcal{L}}{\partial \theta_\ell} =
+  &-\mathbf{y_t}^T\,\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,\mathbf{y_t} \nonumber \\
+  &+\mathbf{y_t}^T\Lambda^{-1}\,\,\left[2\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp} - 2\,\frac{\partial K_{tp}}{\partial \theta_\ell} + K_{tp}\,Q^{-1}\,\frac{\partial Q}{\partial \theta_\ell}\right]\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\mathbf{y_t} \nonumber \\
+  &+\tr\left(\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\right) - \tr\left({K_{pp}}^{-1}\,\frac{\partial K_{pp}}{\partial \theta_\ell}\right) + \tr\left(Q^{-1}\,\frac{\partial Q}{\partial \theta_\ell}\right)
+\end{align}
+with:
+\begin{align}
+\frac{\partial \Lambda_{ii}}{\partial \theta_\ell} &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \left(V^T\,{L_p}^{-1}\,\left[2\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell} - \frac{\partial K_{pp}}{\partial \theta_\ell}\,{L_{p}}^{-1,T}\,V\right]\right)_{ii} \\
+\frac{\partial Q}{\partial \theta_\ell} &= \frac{\partial K_{pp}}{\partial \theta_\ell} + \frac{\partial {K_{tp}}^T}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp} + {K_{tp}}^T\,\Lambda^{-1}\,\frac{\partial K_{tp}}{\partial \theta_\ell} - {K_{tp}}^T\,\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp}
+\end{align}
+The details of the calculations can be found in \rapp{APP:detail_mlik_der_spgp}, as well as in Snelson (2007).
+
+Again, following Seeger et al.~(2003), we can define $B = {L_Q}^{-1,T}\,{L_M}^{-1}\,V\,\Lambda^{-1} = Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}$, $\mathbf{b} = B\,\mathbf{y_t}$, and $\mathbf{\tilde{y}_t} = \Lambda^{-1}\,\mathbf{y_t}$. Then the above can be reformulated as:
+\begin{align}
+\frac{\partial \mathcal{L}}{\partial \theta_\ell} =
+  &-\mathbf{\tilde{y}_t}^T\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\mathbf{\tilde{y}_t} + 2\,\mathbf{\tilde{y}_t}^T\,\left[\frac{\partial \Lambda}{\partial \theta_\ell}\,B^T\,Q - \frac{\partial K_{tp}}{\partial \theta_\ell}\right]\,\mathbf{b} + \mathbf{b}^T\,Q\,B\,\left[-\frac{\partial \Lambda}{\partial \theta_\ell}\,B^T\,Q + 2\,\frac{\partial K_{tp}}{\partial \theta_\ell}\right]\mathbf{b} \nonumber \\
+  &+\mathbf{b}^T\,\frac{\partial K_{pp}}{\partial \theta_\ell}\,\mathbf{b} + \tr\left[\left(\Lambda^{-1} - B^T Q\,B\right)\,\frac{\partial \Lambda}{\partial \theta_\ell}\right] + \tr\left[\left(Q^{-1} - {K_{pp}}^{-1}\right)\,\frac{\partial K_{pp}}{\partial \theta_\ell}\right] + 2\,\tr\left(B\,\frac{\partial K_{tp}}{\partial \theta_\ell}\right)
+\end{align}
+Note that Seeger et al.~(2003) used a less accurate approximation scheme to build their sparse GP (see discussion in Snelson \& Ghahramani 2006), in which $\Lambda = {\sigma_n}^{2}\,{\bm 1}$; their equations can be recovered with this substitution (and provided we define $\mathbf{m} = B^T\,Q\,\mathbf{b}$, since they omitted to define it in their derivations).
+
+\subsection{Special case of squared exponential kernel in 1D}
+
+In an SPGP, we define a squared exponential kernel assuming a variable scale lengths for each pseudo input:
+\begin{align}
+k(x_i,p_j) &= \sigma_{v,j}^2\,\exp\left(-\frac{1}{2}\frac{(x_i - p_j)^2}{{\ell_j}^2}\right)\,, \\
+k(p_i,p_j) &= \sigma_{v,j}^2\,\exp\left(-\frac{1}{2}\frac{(x_i - p_j)^2}{{\ell_j}^2}\right) + \delta_{ij}\,{\sigma_{m,j}}^2\,.
+\end{align}
+We thus have:
+\begin{align}
+\frac{\partial k(x_i,p_j)}{\partial \sigma_{v,k}} &= \delta_{jk}\,2\,\sigma_{v,j}\,\exp\left(-\frac{1}{2}\frac{(x_i - p_j)^2}{{\ell_j}^2}\right) = \delta_{jk}\,2\,\frac{k(x_i,p_j) - \delta_{ij}\,{\sigma_{m,j}}^2}{\sigma_{v,j}}\,, \\
+\frac{\partial k(p_i,p_j)}{\partial \sigma_{m,k}} &= 2\,\delta_{jk}\,\delta_{ij}\,{\sigma_{m,j}}\,, \\
+\frac{\partial k(x_i,p_j)}{\partial \ell_{k}} &= \delta_{jk}\,\frac{(x_i - p_j)^2}{{\ell_j}^3}\,{\sigma_{v,j}}^2\,\exp\left(-\frac{1}{2}\frac{(x_i - p_j)^2}{{\ell_j}^2}\right) = \delta_{jk}\,\frac{(x_i - p_j)^2}{\ell_j}\,\left(k(x_i,p_j) - \delta_{ij}\,{\sigma_{m,j}}^2\right)\,,\\
+\frac{\partial k(x_i,p_j)}{\partial p_{k}} &= -\delta_{jk}\,\frac{x_i - p_j}{{\ell_j}^2}\,{\sigma_{v,j}}^2\,\exp\left(-\frac{1}{2}\frac{(x_i - p_j)^2}{{\ell_j}^2}\right) = -\delta_{jk}\,\frac{x_i - p_j}{{\ell_j}^2}\,\left(k(x_i,p_j) - \delta_{ij}\,{\sigma_{m,j}}^2\right)\,.
+\frac{\partial k(p_i,p_j)}{\partial p_{k}} &= -\delta_{jk}\,\frac{x_i - p_j}{{\ell_j}^2}\,{\sigma_{v,j}}^2\,\exp\left(-\frac{1}{2}\frac{(x_i - p_j)^2}{{\ell_j}^2}\right) = -\delta_{jk}\,\frac{x_i - p_j}{{\ell_j}^2}\,\left(k(x_i,p_j) - \delta_{ij}\,{\sigma_{m,j}}^2\right)\,.
+\end{align}
 
 \appendix
 
@@ -263,8 +302,77 @@ The details of the calculations can be found in \rapp{APP:detail_mlik_spgp}.
 \begin{align}
 \frac{\partial}{\partial \theta_\ell}\left(\mathbf{y_t}^T\,\Lambda^{-1}\,\mathbf{y_t}\right)
   &= \mathbf{y_t}^T\,\frac{\partial}{\partial \theta_\ell}\left(\Lambda^{-1}\right)\,\mathbf{y_t} \\
-  &= \mathbf{y_t}^T\,\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,\mathbf{y_t}
+  &= -\mathbf{y_t}^T\,\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,\mathbf{y_t}
 \end{align}
+
+\begin{align}
+\frac{\partial \Lambda_{ii}}{\partial \theta_\ell}
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \frac{\partial}{\partial \theta_\ell}\left(\mathbf{k_{tp}}_{,i}\,{K_{pp}}^{-1}\,{\mathbf{k_{tp}}_{,i}}^T\right) \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \frac{\partial}{\partial \theta_\ell}\left(K_{tp}\,{K_{pp}}^{-1}\,{K_{tp}}^T\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \left(\frac{\partial K_{tp}}{\partial \theta_\ell}\,{K_{pp}}^{-1}\,{K_{tp}}^T + K_{tp}\,\frac{\partial {K_{pp}}^{-1}}{\partial \theta_\ell}\,{K_{tp}}^T + K_{tp}\,{K_{pp}}^{-1}\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell}\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \left(2\,K_{tp}\,{K_{pp}}^{-1}\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell} + K_{tp}\,\frac{\partial {K_{pp}}^{-1}}{\partial \theta_\ell}\,{K_{tp}}^T\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \left(2\,K_{tp}\,{K_{pp}}^{-1}\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell} - K_{tp}\,{K_{pp}}^{-1}\,\frac{\partial K_{pp}}{\partial \theta_\ell}\,{K_{pp}}^{-1}\,{K_{tp}}^T\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \left(K_{tp}\,{K_{pp}}^{-1}\,\left[2\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell} - \frac{\partial K_{pp}}{\partial \theta_\ell}\,{K_{pp}}^{-1}\,{K_{tp}}^T\right]\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \left(V^T\,{L_p}^{-1}\,\left[2\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell} - \frac{\partial K_{pp}}{\partial \theta_\ell}\,{L_{p}}^{-1,T}\,V\right]\right)_{ii}
+\end{align}
+
+\begin{align}
+\frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right)
+  &= \frac{\partial }{\partial \theta_\ell}\left(\mathbf{y_t}^T\,\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\mathbf{y_t}\right) \\
+  &= \mathbf{y_t}^T\,\frac{\partial }{\partial \theta_\ell}\left(\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\right)\,\mathbf{y_t}
+\end{align}
+\begin{align}
+\frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right) = \mathbf{y_t}^T\,[
+   &\frac{\partial }{\partial \theta_\ell}\left(\Lambda^{-1}\right)\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\\
+   &+\Lambda^{-1}\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1} \\
+   &+\Lambda^{-1}\,K_{tp}\,\frac{\partial }{\partial \theta_\ell}\left(Q^{-1}\right)\,{K_{tp}}^T\,\Lambda^{-1} \\
+   &+\Lambda^{-1}\,K_{tp}\,Q^{-1}\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell}\,\Lambda^{-1} \\
+   &+\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\frac{\partial }{\partial \theta_\ell}\left(\Lambda^{-1}\right) \\
+   &]\,\mathbf{y_t} \\
+\frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right) = \mathbf{y_t}^T\,[
+   &-\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\\
+   &+\Lambda^{-1}\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1} \\
+   &-\Lambda^{-1}\,K_{tp}\,Q^{-1}\,\frac{\partial Q}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1} \\
+   &+\Lambda^{-1}\,K_{tp}\,Q^{-1}\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell}\,\Lambda^{-1} \\
+   &-\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1} \\
+   &]\,\mathbf{y_t} \\
+\frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right) = \mathbf{y_t}^T\Lambda^{-1}\,\,[
+   &-2\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\\
+   &+2\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T \\
+   &-K_{tp}\,Q^{-1}\,\frac{\partial Q}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T \\
+   &]\,\Lambda^{-1}\,\mathbf{y_t}
+\end{align}
+\begin{align}
+\frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right) = \mathbf{y_t}^T\Lambda^{-1}\,\,\left[-2\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp}
+   +2\,\frac{\partial K_{tp}}{\partial \theta_\ell}
+   -K_{tp}\,Q^{-1}\,\frac{\partial Q}{\partial \theta_\ell}
+   \right]\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\mathbf{y_t} \label{EQ:app_dbeta}
+\end{align}
+\begin{align}
+\frac{\partial Q}{\partial \theta_\ell}
+  &= \frac{\partial}{\partial \theta_\ell} \left(K_{pp} + {K_{tp}}^T\,\Lambda^{-1}\,K_{tp}\right) \\
+  &= \frac{\partial K_{pp}}{\partial \theta_\ell} + \frac{\partial}{\partial \theta_\ell}\left({K_{tp}}^T\,\Lambda^{-1}\,K_{tp}\right) \\
+  &= \frac{\partial K_{pp}}{\partial \theta_\ell} + \frac{\partial {K_{tp}}^T}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp} + {K_{tp}}^T\,\Lambda^{-1}\,\frac{\partial K_{tp}}{\partial \theta_\ell} - {K_{tp}}^T\,\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp}
+\end{align}
+
+
+\begin{align}
+\frac{\partial }{\partial \theta_\ell}\tr\left(\log \Lambda\right)
+  &= \tr\left(\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\right)
+\end{align}
+
+\begin{align}
+\frac{\partial }{\partial \theta_\ell} \log \abs{{K_{pp}}^{-1}}
+  = \tr\left(K_{pp}\,\frac{\partial }{\partial \theta_\ell}{K_{pp}}^{-1}\right)
+  = -\tr\left(\frac{\partial K_{pp}}{\partial \theta_\ell}\,{K_{pp}}^{-1}\right)
+\end{align}
+
+\begin{align}
+\frac{\partial }{\partial \theta_\ell} \log \abs{Q}
+  &= \tr\left(Q^{-1}\,\frac{\partial Q}{\partial \theta_\ell}\right)
+\end{align}
+
+\subsubsection{Unused calculations}
 
 \begin{align}
 \frac{\partial \Lambda_{ii}}{\partial \theta_\ell}
@@ -277,57 +385,47 @@ The details of the calculations can be found in \rapp{APP:detail_mlik_spgp}.
   &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - 2\left(V^T \frac{\partial }{\partial \theta_\ell}[{L_p}^{-1}\,{K_{tp}}^{T}]\right)_{ii} \\
   &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - 2\left(V^T \left[{L_p}^{-1}\,\frac{\partial {K_{tp}}^{T}}{\partial \theta_\ell} + \frac{\partial }{\partial \theta_\ell}{L_p}^{-1}\,{K_{tp}}^{T}\right]\right)_{ii} \\
   &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - 2\left(V^T \left[{L_p}^{-1}\,\frac{\partial {K_{tp}}^{T}}{\partial \theta_\ell} - {L_p}^{-1}\,\frac{\partial L_p}{\partial \theta_\ell}\,{L_p}^{-1}\,{K_{tp}}^{T}\right]\right)_{ii} \\
-  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - 2\left(V^T {L_p}^{-1}\,\left[\frac{\partial {K_{tp}}^{T}}{\partial \theta_\ell} - \frac{\partial L_p}{\partial \theta_\ell}\,V\right]\right)_{ii} \\
+  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - 2\left(V^T {L_p}^{-1}\,\left[\frac{\partial {K_{tp}}^{T}}{\partial \theta_\ell} - \frac{\partial L_p}{\partial \theta_\ell}\,V\right]\right)_{ii}
 \end{align}
 
 \begin{align}
-\frac{\partial \Lambda_{ii}}{\partial \theta_\ell}
-  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \frac{\partial}{\partial \theta_\ell}\left(\mathbf{k_{tp}}_{,i}\,{K_{pp}}^{-1}\,{\mathbf{k_{tp}}_{,i}}^T\right) \\ \\
-  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \frac{\partial}{\partial \theta_\ell}\left(K_{tp}\,{K_{pp}}^{-1}\,K_{tp}^T\right)_{ii} \\
-  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \left(\frac{\partial K_{tp}}{\partial \theta_\ell}\,{K_{pp}}^{-1}\,K_{tp}^T + K_{tp}\,\frac{\partial {K_{pp}}^{-1}}{\partial \theta_\ell}\,K_{tp}^T + K_{tp}\,{K_{pp}}^{-1}\,\frac{\partial K_{tp}^T}{\partial \theta_\ell}\right)_{ii} \\
-  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \left(2\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,{K_{pp}}^{-1}\,K_{tp}^T + K_{tp}\,\frac{\partial {K_{pp}}^{-1}}{\partial \theta_\ell}\,K_{tp}^T\right)_{ii} \\
-  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \left(2\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,{K_{pp}}^{-1}\,K_{tp}^T + K_{tp}\,{K_{pp}}^{-1}\,\frac{\partial K_{pp}}{\partial \theta_\ell}\,{K_{pp}}^{-1}\,K_{tp}^T\right)_{ii} \\
-  &= \frac{\partial K_{tt,ii}}{\partial \theta_\ell} - \left(2\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,{L_{p}}^{-1,T}\,V + V^T\,{L_p}^{-1}\,\frac{\partial K_{pp}}{\partial \theta_\ell}\,{L_{p}}^{-1,T}\,V\right)_{ii} \\
-\end{align}
-\begin{align}
 \frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right)
-  &= \frac{\partial }{\partial \theta_\ell}\left(\mathbf{y_t}^T\,\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\mathbf{y_t}\right) \\
-  &= \mathbf{y_t}^T\,\frac{\partial }{\partial \theta_\ell}\left(\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\right)\,\mathbf{y_t} \\
+  &= 2\,{\bm \beta}^T\frac{\partial {\bm \beta}}{\partial \theta_\ell} \\
+  &= 2\,{\bm \beta}^T\frac{\partial}{\partial \theta_\ell}\left({L_M}^{-1}\,V\,\Lambda^{-1}\right)\,\mathbf{y_t} \\
+  &= 2\,{\bm \beta}^T\left[
+    \frac{\partial}{\partial \theta_\ell}\left({L_M}^{-1}\right)\,V\,\Lambda^{-1} +
+    {L_M}^{-1}\,\frac{\partial V}{\partial \theta_\ell}\,\Lambda^{-1} +
+    {L_M}^{-1}\,V\,\frac{\partial}{\partial \theta_\ell}\left(\Lambda^{-1}\right)
+  \right]\,\mathbf{y_t} \\
+  &= 2\,{\bm \beta}^T\left[
+    -{L_M}^{-1}\,\frac{\partial {L_M}}{\partial \theta_\ell}\,{L_M}^{-1}\,V\,\Lambda^{-1} +
+    {L_M}^{-1}\,\frac{\partial V}{\partial \theta_\ell}\,\Lambda^{-1} -
+    {L_M}^{-1}\,V\,\Lambda^{-1}\,\frac{\partial\Lambda}{\partial \theta_\ell}\,\Lambda^{-1}
+  \right]\,\mathbf{y_t} \\
+  &= 2\,{\bm \beta}^T\,{L_M}^{-1}\,\left[
+    -\frac{\partial {L_M}}{\partial \theta_\ell}\,{L_M}^{-1}\,V +
+    \frac{\partial}{\partial \theta_\ell}\left({L_p}^{-1}\,{K_{tp}}^T\right) -
+    V\,\Lambda^{-1}\,\frac{\partial\Lambda}{\partial \theta_\ell}
+  \right]\,\Lambda^{-1}\,\mathbf{y_t} \\
+  &= 2\,{\bm \beta}^T\,{L_M}^{-1}\,\left[
+    -\frac{\partial {L_M}}{\partial \theta_\ell}\,{L_M}^{-1}\,V +
+    \frac{\partial}{\partial \theta_\ell}\left({L_p}^{-1}\right)\,{K_{tp}}^T +
+    {L_p}^{-1}\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell} -
+    V\,\Lambda^{-1}\,\frac{\partial\Lambda}{\partial \theta_\ell}
+  \right]\,\Lambda^{-1}\,\mathbf{y_t} \\
+  &= 2\,{\bm \beta}^T\,{L_M}^{-1}\,\left[
+    -\frac{\partial {L_M}}{\partial \theta_\ell}\,{L_M}^{-1}\,V -
+    {L_p}^{-1}\,\frac{\partial {L_p}}{\partial \theta_\ell}\,V +
+    {L_p}^{-1}\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell} -
+    V\,\Lambda^{-1}\,\frac{\partial\Lambda}{\partial \theta_\ell}
+  \right]\,\Lambda^{-1}\,\mathbf{y_t} \\
+  &= 2\,{\bm \beta}^T\,{L_M}^{-1}\,\left[
+    -\frac{\partial {L_M}}{\partial \theta_\ell}\,{L_M}^{-1}\,V -
+    \Phi\left({L_p}^{-1}\,\frac{\partial {K_{pp}}}{\partial \theta_\ell}\,{L_p}^{-1,T}\right)\,V +
+    {L_p}^{-1}\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell} -
+    V\,\Lambda^{-1}\,\frac{\partial\Lambda}{\partial \theta_\ell}
+  \right]\,\Lambda^{-1}\,\mathbf{y_t}
 \end{align}
-\begin{align}
-\frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right) = \mathbf{y_t}^T\,[
-   &\frac{\partial }{\partial \theta_\ell}\left(\Lambda^{-1}\right)\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\\
-   &+\Lambda^{-1}\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1} \\
-   &+\Lambda^{-1}\,K_{tp}\,\frac{\partial }{\partial \theta_\ell}\left(Q^{-1}\right)\,{K_{tp}}^T\,\Lambda^{-1} \\
-   &+\Lambda^{-1}\,K_{tp}\,Q^{-1}\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell}\,\Lambda^{-1} \\
-   &+\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\frac{\partial }{\partial \theta_\ell}\left(\Lambda^{-1}\right) \\
-   &]\,\mathbf{y_t} \\
-\frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right) = \mathbf{y_t}^T\,[
-   &\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\\
-   &+\Lambda^{-1}\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1} \\
-   &+\Lambda^{-1}\,K_{tp}\,Q^{-1}\,\frac{\partial Q}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1} \\
-   &+\Lambda^{-1}\,K_{tp}\,Q^{-1}\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell}\,\Lambda^{-1} \\
-   &+\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1} \\
-   &]\,\mathbf{y_t} \\
-\frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right) = \mathbf{y_t}^T\Lambda^{-1}\,\,[
-   &2\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp}\,Q^{-1}\,{K_{tp}}^T\\
-   &+2\,\frac{\partial K_{tp}}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T \\
-   &+K_{tp}\,Q^{-1}\,\frac{\partial Q}{\partial \theta_\ell}\,Q^{-1}\,{K_{tp}}^T \\
-   &]\,\Lambda^{-1}\,\mathbf{y_t}
-\end{align}
-\begin{align}
-\frac{\partial }{\partial \theta_\ell}\left({\bm \beta}^T{\bm \beta}\right) = \mathbf{y_t}^T\Lambda^{-1}\,\,\left[2\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp}
-   +2\,\frac{\partial K_{tp}}{\partial \theta_\ell}
-   +K_{tp}\,Q^{-1}\,\frac{\partial Q}{\partial \theta_\ell}
-   \right]\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\mathbf{y_t} \label{EQ:app_dbeta}
-\end{align}
-\begin{align}
-\frac{\partial Q}{\partial \theta_\ell}
-  &= \frac{\partial}{\partial \theta_\ell} \left(K_{pp} + {K_{tp}}^T\,\Lambda^{-1}\,K_{tp}\right) \\
-  &= \frac{\partial K_{pp}}{\partial \theta_\ell} + \frac{\partial}{\partial \theta_\ell}\left({K_{tp}}^T\,\Lambda^{-1}\,K_{tp}\right) \\
-  &= \frac{\partial K_{pp}}{\partial \theta_\ell} + 2\,\frac{\partial {K_{tp}}^T}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp} + {K_{tp}}^T\,\Lambda^{-1}\,\frac{\partial \Lambda}{\partial \theta_\ell}\,\Lambda^{-1}\,K_{tp}
-\end{align}
-Warning: the above is only true when $\partial Q/\partial \theta_\ell$ is sandwitched by an inner product, as in \ref{EQ:app_dbeta}.
 
 \end{document}
 
