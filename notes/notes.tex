@@ -87,7 +87,7 @@ The section on sparse Gaussian processes in inspired from (in reverse publicatio
   \item Seeger et al.~(2003). {\it Fast forward selection to speed up sparse Gaussian process regression}. In C.~M.~Bishop and B.~J.~Frey, editors, Proceedings of the Ninth International Workshop on Artificial Intelligence and Statistics.
 \end{itemize}
 
-\section{Standard (full) GP}
+\section{Standard GP}
 
 \subsection{Predictions from a given training set and covariance function}
 
@@ -106,7 +106,7 @@ This covariance function serves to model our training set with the following Gau
 \end{align}
 where $\mathbf{\bar{y}_t}$ is the mean of the prior, which is assumed to be zero in all that follows. If we want a non zero prior, it can be easily implemented by subtracting this non-zero prior from the training output values $\mathbf{y_t}$ before the training stage, and then adding it back to the predicted test output values $\mathbf{y_*}$ at the very end of the calculations. Therefore, in what follows, we assume:
 \begin{align}
-\mathbf{y_t} | X_t \sim \mathcal{N}(0,K_{tt})\,. \label{EQ:full_prior}
+\mathbf{y_t} | X_t \sim \mathcal{N}(0,K_{tt})\,. \label{EQ:std_prior}
 \end{align}
 
 The key prediction of the GP is that the values of $\mathbf{y_*}$, given we know the training data $X_t$ and $\mathbf{y_t}$ as well as the new positions $X_*$, are drawn from a Gaussian distribution of mean $\mathbf{\bar{y}_*}$ and covariance matrix $C_*$:
@@ -123,7 +123,7 @@ Given a choice of a covariance function $k$, we can use the above two equations 
 
 \subsection{Training the covariance function}
 
-The problem is then to decide how to choose the covariance function. In general this covariance function will depend on several ``hyperparameters'' ${\bm\theta} = \{\theta_i\}$, which define its amplitude and shape. In the calculation above, these hyperparameters are fixed, and used to make a prediction. But some choices of hyperparameters may provide better predictions than others. Ideally, in a fully probabilistic approach, we would marginalize over these hyperparameters to make our predictions, however in practice this is simply too hard. A much simpler way is to optimize these hyperparameters by maximizing the marginal likelihood on the training set, namely $p(\mathbf{y_t}|X_t)$. Given \req{EQ:full_prior}, this likelihood is simply given by our assumed prior $\mathbf{y_t} | X_t \sim \mathcal{N}(0,K_{tt})$, which translates to:
+The problem is then to decide how to choose the covariance function. In general this covariance function will depend on several ``hyperparameters'' ${\bm\theta} = \{\theta_i\}$, which define its amplitude and shape. In the calculation above, these hyperparameters are fixed, and used to make a prediction. But some choices of hyperparameters may provide better predictions than others. Ideally, in a fully probabilistic approach, we would marginalize over these hyperparameters to make our predictions, however in practice this is simply too hard. A much simpler way is to optimize these hyperparameters by maximizing the marginal likelihood on the training set, namely $p(\mathbf{y_t}|X_t)$. Given \req{EQ:std_prior}, this likelihood is simply given by our assumed prior $\mathbf{y_t} | X_t \sim \mathcal{N}(0,K_{tt})$, which translates to:
 \begin{align}
 p(\mathbf{y_t} | X_t) = \frac{\exp\left(-\frac{1}{2}\,\mathbf{y_t}^T\,{K_{tt}}^{-1}\,\mathbf{y_t}\right)}{(2\pi)^{n_t/2}\,\sqrt{\abs{K_{tt}}}}\,,
 \end{align}
@@ -186,9 +186,9 @@ However, it is also possible that the model should have some extra uncorrelated 
 
 \subsection{Formula for GP predictions}
 
-As described above, evaluating the likelihood of a GP for large data sets can become too expensive because of the need to inverse an $n_t \times n_t$ matrix (or doing its Cholesky decomposition, which is faster but has the same algorithmic complexity). To cope with this, several approximations are possible, and one of them are Sparse GPs (Snelson \& Ghahramani 2006), or SPGPs. In this approximation, we introduce $n_p$ ``pseudo inputs'' locations $X_p = \{\mathbf{x}_p\}$ that we can freely adjust, and use these to solve the GP. The covariance matrix we need to invert is now $K_{pp}$, which is evaluated at the pseudo inputs, and is of size $n_p \times n_p$. If we choose $n_p \ll n_t$, then the computations become much faster; $O({n_p}^2\,n_t)$ instead of $O({n_t}^3)$, and the results will become an approximation that still preserves a number of properties of full GPs. In practice it can be an excellent approximation if the pseudo inputs are chosen carefully, and in fact they can be optimized like any other hyperparameter.
+As described above, evaluating the likelihood of a GP for large data sets can become too expensive because of the need to inverse an $n_t \times n_t$ matrix (or doing its Cholesky decomposition, which is faster but has the same algorithmic complexity). To cope with this, several approximations are possible, and one of them are Sparse GPs (Snelson \& Ghahramani 2006), or SPGPs. In this approximation, we introduce $n_p$ ``pseudo inputs'' locations $X_p = \{\mathbf{x}_p\}$ that we can freely adjust, and use these to solve the GP. The covariance matrix we need to invert is now $K_{pp}$, which is evaluated at the pseudo inputs, and is of size $n_p \times n_p$. If we choose $n_p \ll n_t$, then the computations become much faster; $O({n_p}^2\,n_t)$ instead of $O({n_t}^3)$, and the results will become an approximation that still preserves a number of properties of standard GPs. In practice it can be an excellent approximation if the pseudo inputs are chosen carefully, and in fact they can be optimized like any other hyperparameter.
 
-The philosophy behind this approximation can be understood as follows. In the full GP, the prediction for the mean posterior function can reformulated as a weighted sum of the values in the training set:
+The philosophy behind this approximation can be understood as follows. In the standard GP, the prediction for the mean posterior function can reformulated as a weighted sum of the values in the training set:
 \begin{align}
 \bar{y}_*(\mathbf{x_*}) = \sum_i^{n_t} c_{t}(\mathbf{x_*}, \mathbf{x_t}_{,i})\,y_{t,i}\,,
 \end{align}
@@ -196,15 +196,15 @@ with the weighting function $c_{t}$ itself being only dependent on the inputs $\
 \begin{align}
 \bar{y}_*(\mathbf{x_*}) = \sum_i^{n_p} c_{p}(\mathbf{x_*}, \mathbf{x_p}_{,i}, X_t)\,y_{p,i}\,,
 \end{align}
-were the new weighting coefficients $c_{p,i}$ depend internally on the inputs of all sets, namely training inputs, pseudo inputs, and test inputs. When using fewer pseudo inputs than training inputs, the sum above should be less flexible in prediction data. However, the introduction of an extra ``pseudo'' set of data is an advantage of the SPGP over the full GP: the pseudo inputs can in principle lie outside of the training set, and this flexibility can offer a better description of the data compared to full GP.
+were the new weighting coefficients $c_{p,i}$ depend internally on the inputs of all sets, namely training inputs, pseudo inputs, and test inputs. When using fewer pseudo inputs than training inputs, the sum above should be less flexible in prediction data. However, the introduction of an extra ``pseudo'' set of data is an advantage of the SPGP over the standard GP: the pseudo inputs can in principle lie outside of the training set, and this flexibility can offer a better description of the data compared to standard GP.
 
-Since the pseudo output values $\mathbf{y_p}$ (obtained at the location of the pseudo inputs $X_p$) are unknown, we must marginalize over them. Assuming the same prior for the pseudo outputs as for the real data, the GP prediction becomes (Snelson \& Ghahramani 2006):
+Since the pseudo output values $\mathbf{y_p}$ (obtained at the location of the pseudo inputs $X_p$) are unknown, we must marginalize over them. In the original SPGP formulation (Snelson \& Ghahramani 2006), the prior for the pseudo outputs is assumed to be the same as for the real data, namely, the adopted covariance function is used to build ${K_pp}^{-1}$, the prior covariance. Then, still in the Snelson \& Ghahramani (2006) SPGP, the main approximation is that, for given $\mathbf{y_p}$, the $\mathbf{y_*}$ are uncorrelated (otherwise we would still have to invert an $n \times n$ covariance matrix). With these assumptions, the GP prediction becomes:
 \begin{align}
 \mathbf{y_*} | X_*, X_t, \mathbf{y_t}, X_p \sim \mathcal{N}(\mathbf{\bar{y}_*}, C_*)\,,
 \end{align}
 with:
 \begin{align}
-\mathbf{\bar{y}_*} &= {K_{p*}}^T\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\mathbf{y_t}\, \\
+\mathbf{\bar{y}_*} &= {K_{p*}}^T\,Q^{-1}\,{K_{tp}}^T\,\Lambda^{-1}\,\mathbf{y_t}\, \label{EQ:spgp_pred_mean} \\
 C_* &= K_{**} - {K_{p*}}^T\,({K_{pp}}^{-1} - Q^{-1})\,K_{p*}\,,
 \end{align}
 and where:
@@ -254,6 +254,8 @@ Again, following Seeger et al.~(2003), we can define $B = {L_Q}^{-1,T}\,{L_M}^{-
   & + \tr\left[\left(\Lambda^{-1} - B^T Q\,B\right)\,\frac{\partial \Lambda}{\partial \theta_\ell}\right] + \tr\left[\left(Q^{-1} - {K_{pp}}^{-1}\right)\,\frac{\partial K_{pp}}{\partial \theta_\ell}\right] + 2\,\tr\left(B\,\frac{\partial K_{tp}}{\partial \theta_\ell}\right)
 \end{align}
 Note that Seeger et al.~(2003) used a less accurate approximation scheme to build their sparse GP (see discussion in Snelson \& Ghahramani 2006), in which $\Lambda = {\sigma_n}^{2}\,{\bm 1}$; their equations can be recovered with this substitution.
+
+We can identify $\mathbf{m} = \Lambda^{-1}\,\mathbf{\bar{y}_t}$, where $\mathbf{\bar{y}_t}$ is the mean SPGP prediction for the training positions (\req{EQ:spgp_pred_mean}). Then, $\mathbf{b}$ can be identified as the best-fit coefficients of the basis functions.
 
 \subsection{Special case of squared exponential kernel in 1D}
 
