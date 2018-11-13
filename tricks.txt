@@ -6,6 +6,8 @@ List of useful tricks to implement GPs:
 
 *) In the optimization stage, if a parameter p should be positive then optimize for log(p).
 
+*) Sometime, inverting a covariance matrix is numerically unstable because the rows of the matrix are too similar and/or too correlated. This can be alleviated by adding a small "nugget" to the diagonal of the covariance matrix (i.e., a small amount of uncorrelated noise).
+
 *) vif equivalents:
   - v'*v = total(v*v)               (inner product)
   - v*v' = outer_product(v, v)      (outer product)
