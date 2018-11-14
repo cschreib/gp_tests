@@ -13,169 +13,426 @@ int vif_main(int argc, char* argv[]) {
     double var0 = 2.0;
     double std0 = 1.0;
     double nugget = 0.0;
-    bool optimize_variance = false;
-    std::string method = "inverse"; // "inverse", "cholesky"
-    std::string kernel = "sqexp"; // "exp", "sqexp", "nn", "gibbs"
+    uint_t nsparse = 10;
+    bool test_evidence = false;
     read_args(argc-2, argv+2, arg_list(
-        n, name(tseed, "seed"), length0, var0, std0, nugget, method, kernel, optimize_variance
+        n, name(tseed, "seed"), length0, var0, std0, nugget, nsparse, test_evidence
     ));
 
-    vec1d xo, yo, eo, xt;
-    fits::read_table(param_file, "x", xo, "y", yo, "ye", eo, "xt", xt);
+    vec1d xt, yt, et, xs;
+    fits::read_table(param_file, "x", xt, "y", yt, "ye", et, "xt", xs);
 
-    uint_t no = xo.size();
     uint_t nt = xt.size();
+    uint_t ns = xs.size();
+    uint_t np = nsparse;
 
-    matrix::mat2d koo(no,no);
-    matrix::mat2d dlkoo(no,no);
-    matrix::mat2d dvkoo(no,no);
-    matrix::mat2d dskoo(no,no);
-    matrix::mat2d ikoo;
-
-    double logpe = 0.0;
-    for (uint_t i : range(eo)) {
-        logpe += 2.0*log(eo[i]);
+    matrix::mat2d kpp(np,np);
+    matrix::mat2d dlkpp(np,np);
+    matrix::mat2d dvkpp(np,np);
+    vec<1,matrix::mat2d> dpkpp(np);
+    for (uint_t i : range(np)) {
+        dpkpp[i] = matrix::mat2d(np,np);
     }
 
+    matrix::mat2d ktp(nt,np);
+    matrix::mat2d dlktp(nt,np);
+    matrix::mat2d dvktp(nt,np);
+    vec<1,matrix::mat2d> dpktp(np);
+    for (uint_t i : range(np)) {
+        dpktp[i] = matrix::mat2d(nt,np);
+    }
+
+    vec1d ktt(nt);
+    vec1d dvktt(nt);
+
+    // Stuff we want to reuse
+    matrix::mat2d iqkpp;
+    vec1d wb(np);
+    vec1d lambda(nt);
+
     auto fkernel = [&](double x1, double x2, double l, double lv) {
-        double k;
-        if (kernel == "exp") {
-            k = exp(-abs(x1 - x2)/l);
-        } else if (kernel == "sqexp") {
-            k = exp(-0.5*sqr(x1 - x2)/sqr(l));
-        } else if (kernel == "gibbs") {
-            auto length_func = [&](double x) {
-                return l/sqrt(2.0)*(
-                    1.0 - 0.8*exp(-0.5*sqr((x - 3.0)/0.5))
-                );
-            };
-
-            double l1 = length_func(x1);
-            double l2 = length_func(x2);
-            k = ((2*l1*l2)/(sqr(l1) + sqr(l2)))*exp(-0.5*sqr(x1 - x2)/(sqr(l1) + sqr(l2)));
-        } else if (kernel == "nn") {
-            x1 = (x1 - 3)/l;
-            x2 = (x2 - 3)/l;
-            k = asin(
-                2.0*x1*x2/
-                sqrt((1.0 + 2.0*sqr(x1))*(1.0 + 2.0*sqr(x2)))
-            );
-        } else {
-            vif_check(false, "unknown kernel '", kernel, "'");
-        }
-
-        return exp(lv)*k;
+        return exp(lv - 0.5*sqr(x1 - x2)/sqr(l));
     };
 
-    auto dfkernel_l = [&](double x1, double x2, double l, double lv) {
-        double dk;
-        if (kernel == "exp") {
-            dk = exp(-abs(x1 - x2)/l)*abs(x1 - x2)/pow(l,2);
-        } else if (kernel == "sqexp") {
-            dk = exp(-0.5*sqr(x1 - x2)/sqr(l))*sqr(x1 - x2)/pow(l,3);
-        } else if (kernel == "gibbs") {
-            vif_check(false, "unimplemented kernel '", kernel, "'");
-        } else if (kernel == "nn") {
-            vif_check(false, "unimplemented kernel '", kernel, "'");
-        } else {
-            vif_check(false, "unknown kernel '", kernel, "'");
-        }
-
-        return exp(lv)*dk;
+    auto dfkernel_l = [&](double x1, double x2, double l, double lv, double k) {
+        return k*sqr(x1 - x2)/pow(l,3);
     };
 
-    auto dfkernel_v = [&](double x1, double x2, double l, double lv) {
-        return fkernel(x1, x2, l, lv);
+    auto dfkernel_v = [&](double x1, double x2, double l, double lv, double k) {
+        return k;
+    };
+
+    auto dfkernel_p = [&](double x1, double x2, double l, double lv, double k) {
+        return k*(x1 - x2)/sqr(l);
     };
 
     auto get_evidence = [&](vec1d p, minimize_function_output opts) {
         vec1d ret(1+p.size());
-        double l = p[0];
-        double lv, ls;
-        if (optimize_variance) {
-            lv = p[1];
-            ls = p[2];
-        } else {
-            lv = log(var0);
-            ls = p[1];
-        }
+        vec1d xp = p[_-(np-1)];
+        double ll = p[np];
+        double lv = p[np+1];
+        double ls = p[np+2];
 
-        for (uint_t i : range(no))
-        for (uint_t j : range(i, no)) {
-            koo.safe(i,j) = koo.safe(j,i) = fkernel(xo.safe[i], xo.safe[j], l, lv) +
-                (i == j ? nugget + sqr(eo[i]) + exp(2*ls) : 0.0);
+        // Evaluate K matrices and derivatives
+        double ds = 2*exp(2*ls);
+
+        // Kpp
+        for (uint_t i : range(np))
+        for (uint_t j : range(i, np)) {
+            double k = fkernel(xp.safe[i], xp.safe[j], ll, lv);
+            kpp.safe(i,j) = kpp.safe(j,i) = k + (i == j ? nugget + sqr(et[i]) + exp(2*ls) : 0.0);
 
             if (opts == minimize_function_output::derivatives || opts == minimize_function_output::all) {
-                dlkoo.safe(i,j) = dlkoo.safe(j,i) = dfkernel_l(xo.safe[i], xo.safe[j], l, lv);
-                dvkoo.safe(i,j) = dvkoo.safe(j,i) = dfkernel_v(xo.safe[i], xo.safe[j], l, lv);
-                if (optimize_variance) {
-                    if (i == j) dskoo.safe(i,j) = dskoo.safe(j,i) = 2*exp(2*ls);
-                }
+                dlkpp.safe(i,j) = dlkpp.safe(j,i) = dfkernel_l(xp.safe[i], xp.safe[j], ll, lv, k);
+                dvkpp.safe(i,j) = dvkpp.safe(j,i) = dfkernel_v(xp.safe[i], xp.safe[j], ll, lv, k);
+
+                double dp = dfkernel_p(xp.safe[i], xp.safe[j], ll, lv, k);
+                dpkpp.safe[i].safe(i,j) = dpkpp.safe[i].safe(j,i) = -dp;
+                dpkpp.safe[j].safe(i,j) = dpkpp.safe[j].safe(j,i) = +dp;
             }
         }
 
-        double ldkoo = 0.0;
-        vec1d ikooyo;
-        if (method == "inverse") {
-            if (!matrix::invert_symmetric(koo, ikoo)) {
-                error("could not invert Kernel matrix");
-                return ret;
-            }
+        // Ktt
+        for (uint_t i : range(nt)) {
+            double k = fkernel(xt.safe[i], xt.safe[i], ll, lv);
+            ktt.safe[i] = k + nugget + sqr(et[i]) + exp(2*ls);
 
-            matrix::inplace_symmetrize(ikoo);
-            ikooyo = ikoo*yo;
+            if (opts == minimize_function_output::derivatives || opts == minimize_function_output::all) {
+                // dlktt(i,i) = 0
 
-            if (opts == minimize_function_output::value || opts == minimize_function_output::all) {
-                ldkoo = log(matrix::determinant(koo));
-            }
-        } else if (method == "cholesky") {
-            matrix::decompose_cholesky d;
-            if (!d.decompose(koo)) {
-                error("could not Cholesky decompose Kernel matrix");
-                return ret;
-            }
+                dvktt.safe[i] = dfkernel_v(xt.safe[i], xt.safe[i], ll, lv, k);
 
-            ikoo = d.invert();
-            ikooyo = d.solve(yo);
-
-            if (opts == minimize_function_output::value || opts == minimize_function_output::all) {
-                ldkoo = 2.0*d.log_determinant();
+                // dpktt = 0
             }
-        } else {
-            error("unknown inversion method '", method, "'");
+        }
+
+        // Ktp
+        for (uint_t i : range(nt))
+        for (uint_t j : range(np)) {
+            double k = fkernel(xt.safe[i], xp.safe[j], ll, lv);
+            ktp.safe(i,j) = k;
+
+            if (opts == minimize_function_output::derivatives || opts == minimize_function_output::all) {
+                dlktp.safe(i,j) = dfkernel_l(xt.safe[i], xp.safe[j], ll, lv, k);
+                dvktp.safe(i,j) = dfkernel_v(xt.safe[i], xp.safe[j], ll, lv, k);
+
+                double dp = dfkernel_p(xt.safe[i], xp.safe[j], ll, lv, k);
+                dpktp.safe[j].safe(i,j) = dp;
+            }
+        }
+
+        // Cholesky for Kpp
+        matrix::decompose_cholesky lp;
+        if (!lp.decompose(kpp)) {
+            error("could not Cholesky decompose pseudo input Kernel matrix");
             return ret;
         }
 
-        if (opts == minimize_function_output::value || opts == minimize_function_output::all) {
-            double l1 = total(yo*ikooyo);
-            double l2 = ldkoo;
-            double l3 = yo.size()*log(2.0*dpi);
-            ret[0] = 0.5*(l1 + l2 + l3 + logpe);
-            vif_check(is_finite(ret[0]), "log evidence is not finite (", ret[0], " = ",
-                l1, " + ", l2, " + ", l3, " + ", logpe, ")");
+        matrix::mat2d ilp = lp.lower_inverse();
+
+        // Compute V
+        matrix::mat2d v = ilp*transpose(ktp);
+
+        // Compute Lambda
+        for (uint_t i : range(nt)) {
+            double li = ktt.safe[i];
+            for (uint_t j : range(np)) {
+                li -= sqr(v.safe(j,i));
+            }
+
+            lambda.safe[i] = li;
         }
 
+        // Compute y^tilde
+        vec1d ytilde = yt/lambda;
+
+        // Compute M
+        matrix::mat2d m(np, np);
+        for (uint_t i : range(np))
+        for (uint_t j : range(i, np)) {
+            double tm = (i == j ? 1.0 : 0.0);
+            for (uint_t k : range(nt)) {
+                tm += v.safe(i,k)*v.safe(j,k)/lambda.safe[k];
+            }
+            m.safe(i,j) = m.safe(j,i) = tm;
+        }
+
+        // Cholesky for M
+        matrix::decompose_cholesky lm;
+        if (!lm.decompose(m)) {
+            error("could not Cholesky decompose M");
+            return ret;
+        }
+
+        matrix::mat2d ilm = lm.lower_inverse();
+
+        // Calculate log likelihood
+        if (opts == minimize_function_output::value || opts == minimize_function_output::all) {
+            // Compute beta
+            vec1d beta = ilm*v*ytilde;
+
+            double l0 = total(yt*ytilde);
+            double l1 = -total(beta*beta);
+            double l2 = total(log(lambda));
+            double l3 = 2.0*lm.log_lower_determinant();
+            double l4 = nt*log(2.0*dpi);
+
+            vif_check(is_finite(l0), "l0 is invalid: ", l0);
+            vif_check(is_finite(l1), "l1 is invalid: ", l1);
+            vif_check(is_finite(l2), "l2 is invalid: ", l2);
+            vif_check(is_finite(l3), "l3 is invalid: ", l3);
+            vif_check(is_finite(l4), "l4 is invalid: ", l4);
+
+            ret[0] = l0 + l1 + l2 + l3 + l4;
+        }
+
+        // Calculate derivatives
         if (opts == minimize_function_output::derivatives || opts == minimize_function_output::all) {
-            double d1 = -0.5*total(ikooyo*dlkoo*ikooyo);
-            double d2 = 0.5*total(diagonal(ikoo*dlkoo));
-            ret[1] = d1 + d2;
-            vif_check(is_finite(ret[1]), "l derivative is not finite (", ret[1], " = ", d1, " + ", d2, ")");
+            // Compute Q
+            matrix::mat2d q(np, np);
+            for (uint_t i : range(np))
+            for (uint_t j : range(i, np)) {
+                double tq = kpp.safe(i,j);
+                for (uint_t k : range(nt)) {
+                    tq += ktp.safe(k,i)*ktp.safe(k,j)/lambda.safe[k];
+                }
+                q.safe(i,j) = q.safe(j,i) = tq;
+            }
 
-            if (optimize_variance) {
-                d1 = -0.5*total(ikooyo*dvkoo*ikooyo);
-                d2 = 0.5*total(diagonal(ikoo*dvkoo));
-                ret[2] = d1 + d2;
-                vif_check(is_finite(ret[2]), "v derivative is not finite (", ret[2], " = ", d1, " + ", d2, ")");
+            // Cholesky for Q
+            matrix::decompose_cholesky lq;
+            if (!lq.decompose(q)) {
+                error("could not Cholesky decompose Q");
+                return ret;
+            }
 
-                d1 = -0.5*total(ikooyo*dskoo*ikooyo);
-                d2 = 0.5*total(diagonal(ikoo*dskoo));
-                ret[3] = d1 + d2;
-                vif_check(is_finite(ret[3]), "s derivative is not finite (", ret[3], " = ", d1, " + ", d2, ")");
-            } else {
-                d1 = -0.5*total(ikooyo*dskoo*ikooyo);
-                d2 = 0.5*total(diagonal(ikoo*dskoo));
-                ret[2] = d1 + d2;
-                vif_check(is_finite(ret[2]), "s derivative is not finite (", ret[2], " = ", d1, " + ", d2, ")");
+            matrix::mat2d ilq = lq.lower_inverse();
+
+            // Compute B
+            matrix::mat2d b(np,nt);
+            for (uint_t i : range(np))
+            for (uint_t j : range(nt)) {
+                double tb = 0.0;
+                for (uint_t k : range(np))
+                for (uint_t l : range(np)) {
+                    tb += ilq.safe(k,i)*ilm.safe(k,l)*v.safe(l,j)/lambda.safe[j];
+                }
+                b.safe(i,j) = tb;
+            }
+
+            // Compute b
+            wb = b*yt;
+
+            // Compute m
+            vec1d ym = transpose(b)*q*wb;
+
+            // Compute diagonal of (Lambda^-1 - B^T Q B)
+            vec1d lbqb(nt);
+            for (uint_t i : range(nt)) {
+                double tl = 1.0/lambda.safe[i];
+                for (uint_t j : range(np))
+                for (uint_t k : range(j, np)) {
+                    tl -= (j == k ? 1.0 : 2.0)*b.safe(j,i)*q.safe(j,k)*b.safe(k,i);
+                }
+                lbqb.safe[i] = tl;
+            }
+
+            // Compute (Q^-1 - Kpp^-1)
+            // matrix::mat2d qkpp = iq - ikpp;
+            iqkpp = (transpose(ilq)*ilq) - (transpose(ilp)*ilp);
+
+            // Compute Lp^-1,T V
+            matrix::mat2d lpv = transpose(ilp)*v;
+
+            // Compute derivatives now...
+
+            // Derivatives for pseudo input positions (dp***)
+            for (uint_t ip : range(np)) {
+                double dl0 = 0.0; // -(ytilde - m)*dLambda*(ytilde - m)
+                double dl3 = 0.0; // tr[(Lambda^-1 - BQB)*dLambda]
+                for (uint_t i : range(nt)) {
+                    double dlambda1 = -dpktp.safe[ip].safe(i,ip);
+                    double dlambda2 = 0.0;
+                    for (uint_t j : range(np)) {
+                        dlambda2 += dpkpp.safe[ip].safe(ip,j)*lpv.safe(j,i);
+                    }
+
+                    double dlambda = 2.0*lpv.safe(ip,i)*(dlambda1 + dlambda2);
+
+                    dl0 -= sqr(ytilde.safe[i] - ym.safe[i])*dlambda;
+                    dl3 += lbqb.safe[i]*dlambda;
+                }
+
+                double dl1 = 0.0; // -2*(ytilde - m)*dktp*b
+                double dl4 = 0.0; // 2*tr[B*dktp]
+                for (uint_t i : range(nt)) {
+                    dl1 -= (ytilde.safe[i] - ym.safe[i])*dpktp.safe[ip].safe(i,ip);
+                    dl4 += b.safe(ip,i)*dpktp.safe[ip].safe(i,ip);
+                }
+                dl1 *= 2.0*wb.safe[ip];
+                dl4 *= 2.0;
+
+                double dl2 = 0.0; // b*dkpp*b
+                double dl5 = 0.0; // tr[(Q^-1 - Kpp^-1)*dkpp]
+                for (uint_t i : range(np)) {
+                    dl2 += dpkpp.safe[ip].safe(ip,i)*wb.safe[i];
+                    dl5 += dpkpp.safe[ip].safe(ip,i)*iqkpp.safe(i,ip);
+                }
+                dl2 *= 2.0*wb.safe[ip];
+                dl5 *= 2.0;
+
+                vif_check(is_finite(dl0), "dl0 (position ", ip, ") is invalid: ", dl0);
+                vif_check(is_finite(dl1), "dl1 (position ", ip, ") is invalid: ", dl1);
+                vif_check(is_finite(dl2), "dl2 (position ", ip, ") is invalid: ", dl2);
+                vif_check(is_finite(dl3), "dl3 (position ", ip, ") is invalid: ", dl3);
+                vif_check(is_finite(dl4), "dl4 (position ", ip, ") is invalid: ", dl4);
+                vif_check(is_finite(dl5), "dl5 (position ", ip, ") is invalid: ", dl5);
+
+                ret[1+ip] = dl0 + dl1 + dl2 + dl3 + dl4 + dl5;
+            }
+
+            // Derivative for scale length (dl***)
+            {
+                double dl0 = 0.0; // -(ytilde - m)*dLambda*(ytilde - m)
+                double dl3 = 0.0; // tr[(Lambda^-1 - BQB)*dLambda]
+                for (uint_t i : range(nt)) {
+                    double dlambda1 = 0.0;
+                    double dlambda2 = 0.0;
+                    for (uint_t j : range(np)) {
+                        double tdl = 0.0;
+                        for (uint_t k : range(j, np)) {
+                            tdl += (j == k ? 1.0 : 2.0)*dlkpp.safe(j,k)*lpv.safe(k,i);
+                        }
+
+                        dlambda1 += tdl*lpv.safe(j,i);
+                        dlambda2 -= dlktp.safe(i,j)*lpv.safe(j,i);
+                    }
+
+                    dlambda2 *= 2.0;
+
+                    double dlambda = dlambda1 + dlambda2;
+
+                    dl0 -= sqr(ytilde.safe[i] - ym.safe[i])*dlambda;
+                    dl3 += lbqb.safe[i]*dlambda;
+                }
+
+                double dl1 = 0.0; // -2*(ytilde - m)*dktp*b
+                double dl4 = 0.0; // 2*tr[B*dktp]
+                for (uint_t i : range(nt))
+                for (uint_t j : range(np)) {
+                    dl1 -= (ytilde.safe[i] - ym.safe[i])*dlktp.safe(i,j)*wb.safe[j];
+                    dl4 += b.safe(j,i)*dlktp.safe(i,j);
+                }
+                dl1 *= 2.0;
+                dl4 *= 2.0;
+
+                double dl2 = 0.0; // b*dkpp*b
+                double dl5 = 0.0; // tr[(Q^-1 - Kpp^-1)*dkpp]
+                for (uint_t i : range(np))
+                for (uint_t j : range(np)) {
+                    dl2 += wb.safe[i]*dlkpp.safe(i,j)*wb.safe[j];
+                    dl5 += iqkpp.safe(j,i)*dlkpp.safe(i,j);
+                }
+
+                vif_check(is_finite(dl0), "dl0 (scale length) is invalid: ", dl0);
+                vif_check(is_finite(dl1), "dl1 (scale length) is invalid: ", dl1);
+                vif_check(is_finite(dl2), "dl2 (scale length) is invalid: ", dl2);
+                vif_check(is_finite(dl3), "dl3 (scale length) is invalid: ", dl3);
+                vif_check(is_finite(dl4), "dl4 (scale length) is invalid: ", dl4);
+                vif_check(is_finite(dl5), "dl5 (scale length) is invalid: ", dl5);
+
+                ret[1+np+0] = dl0 + dl1 + dl2 + dl3 + dl4 + dl5;
+            }
+
+            // Derivative for variance (dv***)
+            {
+                double dl0 = 0.0; // -(ytilde - m)*dLambda*(ytilde - m)
+                double dl3 = 0.0; // tr[(Lambda^-1 - BQB)*dLambda]
+                for (uint_t i : range(nt))  {
+                    double dlambda0 = dvktt.safe[i];
+                    double dlambda1 = 0.0;
+                    double dlambda2 = 0.0;
+                    for (uint_t j : range(np)) {
+                        double tdl = 0.0;
+                        for (uint_t k : range(j, np)) {
+                            tdl += (j == k ? 1.0 : 2.0)*dvkpp.safe(j,k)*lpv.safe(k,i);
+                        }
+
+                        dlambda1 += tdl*lpv.safe(j,i);
+                        dlambda2 -= dvktp.safe(i,j)*lpv.safe(j,i);
+                    }
+
+                    dlambda2 *= 2.0;
+
+                    double dlambda = dlambda0 + dlambda1 + dlambda2;
+
+                    dl0 -= sqr(ytilde.safe[i] - ym.safe[i])*dlambda;
+                    dl3 += lbqb.safe[i]*dlambda;
+                }
+
+                double dl1 = 0.0; // -2*(ytilde - m)*dktp*b
+                double dl4 = 0.0; // 2*tr[B*dktp]
+                for (uint_t i : range(nt))
+                for (uint_t j : range(np)) {
+                    dl1 -= (ytilde.safe[i] - ym.safe[i])*dvktp.safe(i,j)*wb.safe[j];
+                    dl4 += b.safe(j,i)*dvktp.safe(i,j);
+                }
+                dl1 *= 2.0;
+                dl4 *= 2.0;
+
+                double dl2 = 0.0; // b*dkpp*b
+                double dl5 = 0.0; // tr[(Q^-1 - Kpp^-1)*dkpp]
+                for (uint_t i : range(np))
+                for (uint_t j : range(np)) {
+                    dl2 += wb.safe[i]*dvkpp.safe(i,j)*wb.safe[j];
+                    dl5 += iqkpp.safe(j,i)*dvkpp.safe(i,j);
+                }
+
+                vif_check(is_finite(dl0), "dl0 (variance) is invalid: ", dl0);
+                vif_check(is_finite(dl1), "dl1 (variance) is invalid: ", dl1);
+                vif_check(is_finite(dl2), "dl2 (variance) is invalid: ", dl2);
+                vif_check(is_finite(dl3), "dl3 (variance) is invalid: ", dl3);
+                vif_check(is_finite(dl4), "dl4 (variance) is invalid: ", dl4);
+                vif_check(is_finite(dl5), "dl5 (variance) is invalid: ", dl5);
+
+                ret[1+np+1] = dl0 + dl1 + dl2 + dl3 + dl4 + dl5;
+            }
+
+            // Derivative for model noise (ds***)
+            {
+                double dl0 = 0.0; // -(ytilde - m)*dLambda*(ytilde - m)
+                double dl3 = 0.0; // tr[(Lambda^-1 - BQB)*dLambda]
+                for (uint_t i : range(nt))  {
+                    double dlambda0 = 1.0;
+                    double dlambda1 = 0.0;
+                    for (uint_t j : range(np)) {
+                        dlambda1 += sqr(lpv.safe(j,i));
+                    }
+
+                    double dlambda = dlambda0 + dlambda1;
+
+                    dl0 -= sqr(ytilde.safe[i] - ym.safe[i])*dlambda;
+                    dl3 += lbqb.safe[i]*dlambda;
+                }
+
+                double dl1 = 0.0; // -2*(ytilde - m)*dktp*b
+                double dl4 = 0.0; // 2*tr[B*dktp]
+
+                double dl2 = 0.0; // b*dkpp*b
+                double dl5 = 0.0; // tr[(Q^-1 - Kpp^-1)*dkpp]
+                for (uint_t i : range(np)) {
+                    dl2 += sqr(wb.safe[i]);
+                    dl5 += iqkpp.safe(i,i);
+                }
+
+                vif_check(is_finite(dl0), "dl0 (noise) is invalid: ", dl0);
+                vif_check(is_finite(dl1), "dl1 (noise) is invalid: ", dl1);
+                vif_check(is_finite(dl2), "dl2 (noise) is invalid: ", dl2);
+                vif_check(is_finite(dl3), "dl3 (noise) is invalid: ", dl3);
+                vif_check(is_finite(dl4), "dl4 (noise) is invalid: ", dl4);
+                vif_check(is_finite(dl5), "dl5 (noise) is invalid: ", dl5);
+
+                ret[1+np+2] = ds*(dl0 + dl1 + dl2 + dl3 + dl4 + dl5);
             }
         }
 
@@ -183,61 +440,66 @@ int vif_main(int argc, char* argv[]) {
     };
 
     double t = now();
-    vec1d p0;
-    if (optimize_variance) {
-        p0 = {length0, log(var0), log(std0)};
+    vec1d p0 = rgen(min(xt), max(xt), np);
+    append(p0, vec1d{length0, log(var0), log(std0)});
+    print("init values: ", p0);
+
+    if (test_evidence) {
+        vec1d r0 = get_evidence(p0, minimize_function_output::all);
+        for (uint_t i : range(p0)) {
+            double dp = 1e-5;
+            vec1d p1 = p0;
+            p1[i] += dp;
+            vec1d r1 = get_evidence(p1, minimize_function_output::value);
+            print((r1[0] - r0[0])/dp, ", ", r0[1+i]);
+        }
     } else {
-        p0 = {length0, log(std0)};
+        minimize_params opts;
+        minimize_result r = minimize_bfgs(opts, p0, get_evidence);
+        t = now() - t;
+        print("time needed: ", t);
+        print("success: ", r.success);
+        print("iterations: ", r.niter);
+        print("values: ", r.params);
+        print("loge: ", -r.value);
+
+        vec1d xp = r.params[_-(np-1)];
+        double l = r.params[np+0];
+        double lv = r.params[np+1];
+        double ls = r.params[np+2];
+
+        matrix::mat2d kps(np,ns);
+        matrix::mat2d kss(ns,ns);
+
+        for (uint_t i : range(ns))
+        for (uint_t j : range(i, ns)) {
+            kss.safe(i,j) = kss.safe(j,i) = fkernel(xs.safe[i], xs.safe[j], l, lv) +
+                (i == j ? nugget + exp(2*ls) : 0.0);
+        }
+        for (uint_t i : range(np))
+        for (uint_t j : range(ns)) {
+            kps.safe(i,j) = fkernel(xp.safe[i], xs.safe[j], l, lv);
+        }
+
+        vec1d m = transpose(kps)*wb;
+        matrix::mat2d cov = kss + transpose(kps)*iqkpp*kps;
+
+        matrix::decompose_cholesky d;
+        if (!d.decompose(cov)) {
+            error("could not decompose covariance matrix! try adding small sigma^2 to diagonal");
+            return 1;
+        }
+
+        auto seed = make_seed(tseed);
+
+        vec2d ys(n, ns);
+        for (uint_t i : range(n)) {
+            ys(i,_) = m + d.l*randomn(seed, ns);
+        }
+
+        fits::write_table(output_file, "ys", ys, "cov", cov.base, "m", m, "xp", xp,
+            "length", l, "amplitude", exp(lv), "noise", exp(ls));
     }
-    minimize_params opts;
-    minimize_result r = minimize_bfgs(opts, p0, get_evidence);
-    t = now() - t;
-    print("time needed: ", t);
-    print("success: ", r.success);
-    print("iterations: ", r.niter);
-    print("values: ", r.params);
-    print("loge: ", -r.value);
-
-    double l = r.params[0];
-    double lv, ls;
-    if (optimize_variance) {
-        lv = r.params[1];
-        ls = r.params[2];
-    } else {
-        lv = log(var0);
-        ls = r.params[1];
-    }
-
-    matrix::mat2d kto(nt,no);
-    matrix::mat2d ktt(nt,nt);
-
-    for (uint_t i : range(nt))
-    for (uint_t j : range(i, nt)) {
-        ktt.safe(i,j) = ktt.safe(j,i) = fkernel(xt.safe[i], xt.safe[j], l, lv) +
-            (i == j ? nugget + exp(2*ls) : 0.0);
-    }
-    for (uint_t i : range(nt))
-    for (uint_t j : range(no)) {
-        kto.safe(i,j) = fkernel(xt.safe[i], xo.safe[j], l, lv);
-    }
-
-    vec1d m = kto*(ikoo*yo);
-    matrix::mat2d cov = ktt - kto*ikoo*transpose(kto);
-
-    matrix::decompose_cholesky d;
-    if (!d.decompose(cov)) {
-        error("could not decompose covariance matrix! try adding small sigma^2 to diagonal");
-        return 1;
-    }
-
-    auto seed = make_seed(tseed);
-
-    vec2d yt(n, nt);
-    for (uint_t i : range(n)) {
-        yt(i,_) = m + d.l*randomn(seed, nt);
-    }
-
-    fits::write_table(output_file, "yt", yt, "cov", cov.base, "m", m);
 
     return 0;
 }

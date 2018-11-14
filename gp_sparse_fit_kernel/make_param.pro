@@ -1,5 +1,5 @@
 seed = 42
-np = 100
+np = 1000
 ; x = randomu(seed, np)*5
 x = rgen(0, 10.0, np)
 xt = rgen(-1+min(x), max(x)+1, 200)

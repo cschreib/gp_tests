@@ -139,7 +139,7 @@ int vif_main(int argc, char* argv[]) {
             ikooyo = d.solve(yo);
 
             if (opts == minimize_function_output::value || opts == minimize_function_output::all) {
-                ldkoo = 2.0*d.log_determinant();
+                ldkoo = 2.0*d.log_lower_determinant();
             }
         } else {
             error("unknown inversion method '", method, "'");
