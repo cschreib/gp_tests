@@ -130,8 +130,13 @@ int vif_main(int argc, char* argv[]) {
 
         matrix::mat2d ilp = lp.lower_inverse();
 
-        // Compute V
-        matrix::mat2d v = ilp*transpose(ktp);
+        // Compute V = Lp^-1 Ktp^T
+        matrix::mat2d v(np,nt);
+        for (uint_t i : range(np))
+        for (uint_t j : range(nt))
+        for (uint_t k : range(np)) {
+            v.safe(i,j) += ilp.safe(i,k)*ktp.safe(j,k);
+        }
 
         // Compute Lambda
         for (uint_t i : range(nt)) {
@@ -166,10 +171,18 @@ int vif_main(int argc, char* argv[]) {
 
         matrix::mat2d ilm = lm.lower_inverse();
 
+        // Compute Lm^-1 V Lambda^-1
+        matrix::mat2d ivl(np,nt);
+        for (uint_t i : range(np))
+        for (uint_t j : range(nt))
+        for (uint_t k : range(np)) {
+            ivl.safe(i,j) += ilm.safe(i,k)*v.safe(k,j)/lambda.safe[j];
+        }
+
         // Calculate log likelihood
         if (opts == minimize_function_output::value || opts == minimize_function_output::all) {
             // Compute beta
-            vec1d beta = ilm*v*ytilde;
+            vec1d beta = ivl*yt;
 
             double l0 = total(yt*ytilde);
             double l1 = -total(beta*beta);
@@ -211,13 +224,9 @@ int vif_main(int argc, char* argv[]) {
             // Compute B
             matrix::mat2d b(np,nt);
             for (uint_t i : range(np))
-            for (uint_t j : range(nt)) {
-                double tb = 0.0;
-                for (uint_t k : range(np))
-                for (uint_t l : range(np)) {
-                    tb += ilq.safe(k,i)*ilm.safe(k,l)*v.safe(l,j)/lambda.safe[j];
-                }
-                b.safe(i,j) = tb;
+            for (uint_t j : range(nt))
+            for (uint_t k : range(np)) {
+                b.safe(i,j) += ilq.safe(k,i)*ivl.safe(k,j);
             }
 
             // Compute b
@@ -230,16 +239,14 @@ int vif_main(int argc, char* argv[]) {
             vec1d lbqb(nt);
             for (uint_t i : range(nt)) {
                 double tl = 1.0/lambda.safe[i];
-                for (uint_t j : range(np))
-                for (uint_t k : range(j, np)) {
-                    tl -= (j == k ? 1.0 : 2.0)*b.safe(j,i)*q.safe(j,k)*b.safe(k,i);
+                for (uint_t j : range(np)) {
+                    tl -= sqr(ivl.safe(j,i));
                 }
                 lbqb.safe[i] = tl;
             }
 
             // Compute (Q^-1 - Kpp^-1)
-            // matrix::mat2d qkpp = iq - ikpp;
-            iqkpp = (transpose(ilq)*ilq) - (transpose(ilp)*ilp);
+            iqkpp = lq.invert() - lp.invert(); // faster than using ilq and ilp
 
             // Compute Lp^-1,T V
             matrix::mat2d lpv = transpose(ilp)*v;
