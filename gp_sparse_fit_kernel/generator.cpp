@@ -14,9 +14,10 @@ int vif_main(int argc, char* argv[]) {
     double std0 = 1.0;
     double nugget = 0.0;
     uint_t nsparse = 10;
+    double spread = 2.0;
     bool test_evidence = false;
     read_args(argc-2, argv+2, arg_list(
-        n, name(tseed, "seed"), length0, var0, std0, nugget, nsparse, test_evidence
+        n, name(tseed, "seed"), length0, var0, std0, nugget, nsparse, test_evidence, spread
     ));
 
     vec1d xt, yt, et, xs;
@@ -446,8 +447,11 @@ int vif_main(int argc, char* argv[]) {
         return ret;
     };
 
-    double t = now();
-    vec1d p0 = rgen(min(xt), max(xt), np);
+    double mi = min(xt);
+    double ma = max(xt);
+    double dm = 0.5*(ma - mi);
+    double mm = 0.5*(ma + mi);
+    vec1d p0 = rgen(mm - spread*dm, mm + spread*dm, np);
     append(p0, vec1d{length0, log(var0), log(std0)});
     print("init values: ", p0);
 
@@ -461,6 +465,7 @@ int vif_main(int argc, char* argv[]) {
             print((r1[0] - r0[0])/dp, ", ", r0[1+i]);
         }
     } else {
+        double t = now();
         minimize_params opts;
         minimize_result r = minimize_bfgs(opts, p0, get_evidence);
         t = now() - t;
